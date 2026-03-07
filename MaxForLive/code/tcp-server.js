@@ -1,12 +1,12 @@
 // tcp-server.js — Node.js TCP server for Max for Live AbletonMCP device
-// Runs inside node.script, communicates with lom-handler.js via Max dicts
+// Communicates with lom-handler.js by passing JSON strings as Max messages
 
 var maxAPI = require("max-api");
 var net = require("net");
 
 var PORT = 9877;
 var server = null;
-var pendingRequests = {}; // requestId -> { socket, buffer }
+var pendingRequests = {}; // requestId -> socket
 var nextRequestId = 1;
 
 // Start TCP server
@@ -19,7 +19,6 @@ function startServer() {
         socket.on("data", function (data) {
             buffer += data.toString("utf-8");
 
-            // Try to parse complete JSON from buffer
             var parsed = tryParseJSON(buffer);
             while (parsed) {
                 var command = parsed.value;
@@ -28,17 +27,12 @@ function startServer() {
                 var requestId = String(nextRequestId++);
                 pendingRequests[requestId] = socket;
 
-                // Write command to request dict and trigger lom-handler
-                maxAPI.setDict("request_dict", {
-                    requestId: requestId,
+                // Send command as: command <requestId> <jsonString>
+                var jsonStr = JSON.stringify({
                     type: command.type || "",
                     params: command.params || {}
-                }).then(function () {
-                    maxAPI.outlet("command", requestId);
-                }).catch(function (err) {
-                    maxAPI.post("Error setting request dict: " + err);
-                    sendResponse(requestId, { status: "error", message: "Internal error: " + err });
                 });
+                maxAPI.outlet("command", requestId, jsonStr);
 
                 parsed = tryParseJSON(buffer);
             }
@@ -68,35 +62,29 @@ function startServer() {
     });
 }
 
-// Handle response from lom-handler
+// Handle response from lom-handler: "response <requestId> <jsonString>"
 maxAPI.addHandler("response", function () {
-    maxAPI.getDict("response_dict").then(function (dict) {
-        var requestId = dict.requestId;
-        sendResponse(requestId, {
-            status: dict.status || "success",
-            result: dict.result,
-            message: dict.message
-        });
-    }).catch(function (err) {
-        maxAPI.post("Error reading response dict: " + err);
-    });
-});
+    // arguments come as: requestId, jsonString
+    var args = Array.prototype.slice.call(arguments);
+    var requestId = String(args[0]);
+    var jsonStr = args.slice(1).join(" ");
 
-function sendResponse(requestId, response) {
     var socket = pendingRequests[requestId];
     if (socket && !socket.destroyed) {
         try {
-            // Clean up response — remove undefined fields
-            var clean = { status: response.status };
-            if (response.result !== undefined) clean.result = response.result;
-            if (response.message !== undefined) clean.message = response.message;
-            socket.write(JSON.stringify(clean));
+            socket.write(jsonStr);
         } catch (err) {
             maxAPI.post("Error sending response: " + err.message);
         }
     }
     delete pendingRequests[requestId];
-}
+});
+
+// Ignore bangs
+maxAPI.addHandler(maxAPI.MESSAGE_TYPES.BANG, function () {});
+
+// Ignore other messages
+maxAPI.addHandler(maxAPI.MESSAGE_TYPES.ALL, function () {});
 
 function cleanupSocket(socket) {
     var keys = Object.keys(pendingRequests);
@@ -107,8 +95,6 @@ function cleanupSocket(socket) {
     }
 }
 
-// Try to parse a complete JSON object from the front of a string buffer.
-// Returns { value, remaining } on success, or null if incomplete.
 function tryParseJSON(str) {
     str = str.trimLeft();
     if (!str || str[0] !== "{") return null;
@@ -119,18 +105,9 @@ function tryParseJSON(str) {
 
     for (var i = 0; i < str.length; i++) {
         var ch = str[i];
-        if (escape) {
-            escape = false;
-            continue;
-        }
-        if (ch === "\\") {
-            escape = true;
-            continue;
-        }
-        if (ch === '"') {
-            inString = !inString;
-            continue;
-        }
+        if (escape) { escape = false; continue; }
+        if (ch === "\\") { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
         if (inString) continue;
         if (ch === "{") depth++;
         else if (ch === "}") {
@@ -140,21 +117,15 @@ function tryParseJSON(str) {
                 try {
                     var value = JSON.parse(jsonStr);
                     return { value: value, remaining: str.substring(i + 1) };
-                } catch (e) {
-                    return null;
-                }
+                } catch (e) { return null; }
             }
         }
     }
     return null;
 }
 
-// Clean shutdown
 maxAPI.addHandler("shutdown", function () {
-    if (server) {
-        server.close();
-        maxAPI.post("AbletonMCP: Server stopped");
-    }
+    if (server) { server.close(); maxAPI.post("AbletonMCP: Server stopped"); }
 });
 
 startServer();

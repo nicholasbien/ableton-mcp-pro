@@ -4,17 +4,21 @@
 inlets = 1;
 outlets = 1;
 
-var REQUEST_DICT_NAME = "request_dict";
-var RESPONSE_DICT_NAME = "response_dict";
-
 // Command queue — process one at a time
 var commandQueue = [];
 var processing = false;
 
 // ─── Inlet handler ───
+// Receives: command <requestId> <jsonString>
 
-function command(requestId) {
-    commandQueue.push(String(requestId));
+function command() {
+    // Collect all arguments — requestId is first, rest is JSON string (may be split by spaces)
+    var args = arrayfromargs(messagename, arguments);
+    // args[0] = "command", args[1] = requestId, args[2..] = JSON string parts
+    var requestId = String(args[1]);
+    var jsonStr = args.slice(2).join(" ");
+
+    commandQueue.push({ requestId: requestId, jsonStr: jsonStr });
     if (!processing) {
         processNext();
     }
@@ -26,63 +30,37 @@ function processNext() {
         return;
     }
     processing = true;
-    var requestId = commandQueue.shift();
+    var item = commandQueue.shift();
+    var requestId = item.requestId;
 
-    var reqDict = new Dict(REQUEST_DICT_NAME);
-    var cmdType = reqDict.get("type");
+    var cmdType = "";
     var params = {};
-
-    // Dict.get returns strings/numbers directly, sub-dicts as Dict names
-    var paramsRef = reqDict.get("params");
-    if (paramsRef !== undefined && paramsRef !== null) {
-        // Read params dict — reqDict contains params as a sub-dictionary
-        var pDict = new Dict(REQUEST_DICT_NAME);
-        params = dictToObj(pDict, "params");
+    try {
+        var parsed = JSON.parse(item.jsonStr);
+        cmdType = parsed.type || "";
+        params = parsed.params || {};
+    } catch (e) {
+        post("Error parsing command JSON: " + e + "\n");
     }
 
-    var response;
+    var responseJson;
     try {
         var result = dispatch(String(cmdType), params);
-        response = { requestId: requestId, status: "success", result: result };
+        responseJson = JSON.stringify({ status: "success", result: result });
     } catch (e) {
-        response = { requestId: requestId, status: "error", message: String(e) };
+        responseJson = JSON.stringify({ status: "error", message: String(e) });
     }
 
-    var respDict = new Dict(RESPONSE_DICT_NAME);
-    respDict.parse(JSON.stringify(response));
-
-    outlet(0, "response");
+    outlet(0, "response", requestId, responseJson);
 
     // Process next command on next tick to avoid stack overflow
     var t = new Task(processNext);
     t.schedule(1);
 }
 
-// ─── Dict helpers ───
-
-// Read a sub-key path from a Dict into a plain JS object
-function dictToObj(dict, keyPath) {
-    var raw = dict.get(keyPath);
-    if (raw === undefined || raw === null) return {};
-
-    // If it's a string that looks like a dict name, try to parse sub-dict
-    if (typeof raw === "string" && raw.indexOf("u") === 0) {
-        // Max dicts return sub-dict references; re-read as JSON
-        var jsonStr = dict.stringify(keyPath);
-        if (jsonStr) {
-            try { return JSON.parse(jsonStr); } catch (e) { return {}; }
-        }
-    }
-
-    // For simple values
-    if (typeof raw === "object") return raw;
-
-    // Try stringify approach for nested dicts
-    var jsonStr = dict.stringify(keyPath);
-    if (jsonStr) {
-        try { return JSON.parse(jsonStr); } catch (e) { return {}; }
-    }
-    return {};
+// Handle anything function — catch messages that aren't "command"
+function anything() {
+    // ignore
 }
 
 // ─── Track path resolution ───
