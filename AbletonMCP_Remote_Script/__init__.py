@@ -296,7 +296,7 @@ class AbletonMCP(ControlSurface):
                                  "duplicate_region", "crop_clip",
                                  "set_clip_color", "set_clip_muted", "set_clip_launch_mode",
                                  "set_clip_launch_quantization", "set_clip_legato",
-                                 "set_clip_start_marker", "set_clip_end_marker", "set_clip_ram_mode",
+                                 "set_clip_start_marker", "set_clip_end_marker",
                                  "set_clip_warping", "set_clip_warp_mode", "set_clip_gain",
                                  "set_clip_pitch", "add_warp_marker", "move_warp_marker",
                                  "delete_warp_marker",
@@ -306,7 +306,7 @@ class AbletonMCP(ControlSurface):
                                  "set_swing_amount", "set_groove_amount", "continue_playing",
                                  "set_session_record", "set_session_automation_record",
                                  "re_enable_automation", "set_punch_in", "set_punch_out",
-                                 "set_exclusive_arm",
+
                                  "create_return_track", "delete_return_track",
                                  "set_track_color", "set_track_monitoring",
                                  "set_track_input_routing", "set_track_output_routing",
@@ -563,11 +563,6 @@ class AbletonMCP(ControlSurface):
                             clip_index = params.get("clip_index", 0)
                             position = params.get("position", 0.0)
                             result = self._set_clip_end_marker(track_index, clip_index, position)
-                        elif command_type == "set_clip_ram_mode":
-                            track_index = params.get("track_index", 0)
-                            clip_index = params.get("clip_index", 0)
-                            ram_mode = params.get("ram_mode", False)
-                            result = self._set_clip_ram_mode(track_index, clip_index, ram_mode)
                         elif command_type == "set_clip_warping":
                             track_index = params.get("track_index", 0)
                             clip_index = params.get("clip_index", 0)
@@ -646,9 +641,6 @@ class AbletonMCP(ControlSurface):
                         elif command_type == "set_punch_out":
                             on = params.get("on", False)
                             result = self._set_punch_out(on)
-                        elif command_type == "set_exclusive_arm":
-                            on = params.get("on", False)
-                            result = self._set_exclusive_arm(on)
                         elif command_type == "create_return_track":
                             result = self._create_return_track()
                         elif command_type == "delete_return_track":
@@ -1730,10 +1722,15 @@ class AbletonMCP(ControlSurface):
                 "launch_mode": clip.launch_mode,
                 "launch_quantization": clip.launch_quantization if hasattr(clip, 'launch_quantization') else 0,
                 "legato": clip.legato if hasattr(clip, 'legato') else False,
-                "ram_mode": clip.ram_mode if hasattr(clip, 'ram_mode') else False,
             }
             # Audio-specific properties
-            if clip.is_audio_clip if hasattr(clip, 'is_audio_clip') else False:
+            is_audio = clip.is_audio_clip if hasattr(clip, 'is_audio_clip') else False
+            if is_audio:
+                try:
+                    result["ram_mode"] = clip.ram_mode
+                except:
+                    result["ram_mode"] = False
+            if is_audio:
                 result["warping"] = clip.warping if hasattr(clip, 'warping') else False
                 result["warp_mode"] = clip.warp_mode if hasattr(clip, 'warp_mode') else 0
                 result["pitch_coarse"] = clip.pitch_coarse if hasattr(clip, 'pitch_coarse') else 0
@@ -1915,20 +1912,6 @@ class AbletonMCP(ControlSurface):
             return {"end_marker": clip.end_marker}
         except Exception as e:
             self.log_message("Error setting clip end marker: " + str(e))
-            raise
-
-    def _set_clip_ram_mode(self, track_index, clip_index, ram_mode):
-        """Set clip RAM mode (True = load into RAM)"""
-        try:
-            track = self._get_track(track_index)
-            clip_slot = track.clip_slots[clip_index]
-            if not clip_slot.has_clip:
-                raise Exception("No clip in slot")
-            clip = clip_slot.clip
-            clip.ram_mode = ram_mode
-            return {"ram_mode": clip.ram_mode}
-        except Exception as e:
-            self.log_message("Error setting clip RAM mode: " + str(e))
             raise
 
     def _set_clip_warping(self, track_index, clip_index, warping):
@@ -2218,15 +2201,6 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error setting punch out: " + str(e))
             raise
 
-    def _set_exclusive_arm(self, on):
-        """Enable or disable exclusive arm"""
-        try:
-            self._song.exclusive_arm = on
-            return {"exclusive_arm": self._song.exclusive_arm}
-        except Exception as e:
-            self.log_message("Error setting exclusive arm: " + str(e))
-            raise
-
     def _create_return_track(self):
         """Create a new return track"""
         try:
@@ -2311,12 +2285,14 @@ class AbletonMCP(ControlSurface):
         """Set track output routing by name"""
         try:
             track = self._get_track(track_index)
+            available = []
             for routing_type in track.available_output_routing_types:
                 name = str(routing_type.display_name) if hasattr(routing_type, 'display_name') else str(routing_type)
-                if name == routing_type_name:
+                available.append(name)
+                if name.lower() == routing_type_name.lower():
                     track.output_routing_type = routing_type
-                    return {"output_routing_type": routing_type_name}
-            raise Exception("Routing type not found: " + routing_type_name)
+                    return {"output_routing_type": name}
+            raise Exception("Routing type not found: " + routing_type_name + ". Available: " + ", ".join(available))
         except Exception as e:
             self.log_message("Error setting track output routing: " + str(e))
             raise

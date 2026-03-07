@@ -1684,22 +1684,7 @@ def set_clip_end_marker(ctx: Context, track_index: int, clip_index: int, positio
         logger.error(f"Error setting end marker: {str(e)}")
         return f"Error setting end marker: {str(e)}"
 
-@mcp.tool()
-def set_clip_ram_mode(ctx: Context, track_index: int, clip_index: int, ram_mode: bool) -> str:
-    """Set clip RAM mode (load clip into RAM for faster access).
 
-    Parameters:
-    - track_index: The index of the track
-    - clip_index: The index of the clip slot
-    - ram_mode: True to load into RAM, False for disk streaming
-    """
-    try:
-        ableton = get_ableton_connection()
-        result = ableton.send_command("set_clip_ram_mode", {"track_index": track_index, "clip_index": clip_index, "ram_mode": ram_mode})
-        return f"{'Enabled' if ram_mode else 'Disabled'} RAM mode"
-    except Exception as e:
-        logger.error(f"Error setting RAM mode: {str(e)}")
-        return f"Error setting RAM mode: {str(e)}"
 
 # ============ AUDIO CLIP OPERATIONS ============
 
@@ -2067,21 +2052,6 @@ def set_punch_out(ctx: Context, on: bool) -> str:
     except Exception as e:
         logger.error(f"Error setting punch out: {str(e)}")
         return f"Error setting punch out: {str(e)}"
-
-@mcp.tool()
-def set_exclusive_arm(ctx: Context, on: bool) -> str:
-    """Enable or disable exclusive arm mode (only one track armed at a time).
-
-    Parameters:
-    - on: True to enable, False to disable
-    """
-    try:
-        ableton = get_ableton_connection()
-        result = ableton.send_command("set_exclusive_arm", {"on": on})
-        return f"{'Enabled' if on else 'Disabled'} exclusive arm"
-    except Exception as e:
-        logger.error(f"Error setting exclusive arm: {str(e)}")
-        return f"Error setting exclusive arm: {str(e)}"
 
 @mcp.tool()
 def set_scale(ctx: Context, name: str = None, root_note: int = None) -> str:
