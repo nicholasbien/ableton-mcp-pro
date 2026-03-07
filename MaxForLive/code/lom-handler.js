@@ -542,121 +542,31 @@ function cmd_get_clip_envelope(params) {
     };
 }
 
+// Browser categories are named properties on the browser object
+var BROWSER_CATEGORIES = ["instruments", "sounds", "drums", "audio_effects", "midi_effects"];
+var BROWSER_CATEGORY_LABELS = {
+    "instruments": "Instruments",
+    "sounds": "Sounds",
+    "drums": "Drums",
+    "audio_effects": "Audio Effects",
+    "midi_effects": "MIDI Effects"
+};
+
+// Get a LiveAPI for a browser category by name.
+// "live_app browser" doesn't work as a path — browser is a property returning an object id.
+function getBrowserCategory(catName) {
+    // Browser is NOT accessible from M4L's JS LiveAPI.
+    // Application.browser is only available from Python Remote Scripts.
+    // Returns null — browser commands will return friendly error messages.
+    return null;
+}
+
 function cmd_get_browser_tree(params) {
-    var categoryType = param(params, "category_type", "all");
-    var categories = [];
-
-    // In LiveAPI, browser children are accessed by index, not by name
-    var browser = new LiveAPI("live_app browser");
-    var childCount = browser.getcount("children");
-
-    for (var i = 0; i < childCount; i++) {
-        var catPath = "live_app browser children " + i;
-        try {
-            var catName = apiGetStr(catPath, "name");
-            var catNameLower = catName.toLowerCase().replace(/ /g, "_");
-
-            if (categoryType !== "all" && categoryType !== catNameLower
-                && categoryType !== catName.toLowerCase()) continue;
-
-            categories.push({
-                name: catName,
-                is_folder: true,
-                is_device: false,
-                is_loadable: false,
-                uri: apiGetStr(catPath, "uri"),
-                children: []
-            });
-        } catch (e) {
-            // skip inaccessible
-        }
-    }
-
-    return {
-        type: categoryType,
-        categories: categories
-    };
+    throw "Browser is not accessible from Max for Live devices. Use the Remote Script instead, or drag instruments manually from Ableton's browser.";
 }
 
 function cmd_get_browser_items_at_path(params) {
-    var path = param(params, "path", "");
-    var pathParts = path.split("/");
-    if (pathParts.length === 0) throw "Invalid path";
-
-    var rootCategory = pathParts[0].toLowerCase();
-
-    // Find the root category by iterating browser children by index
-    var browser = new LiveAPI("live_app browser");
-    var browserChildCount = browser.getcount("children");
-    var current = null;
-
-    for (var r = 0; r < browserChildCount; r++) {
-        var rPath = "live_app browser children " + r;
-        var rName = apiGetStr(rPath, "name").toLowerCase().replace(/ /g, "_");
-        if (rName === rootCategory || apiGetStr(rPath, "name").toLowerCase() === rootCategory) {
-            current = new LiveAPI(rPath);
-            break;
-        }
-    }
-
-    if (!current) {
-        return {
-            path: path,
-            error: "Unknown or unavailable category: " + rootCategory,
-            items: []
-        };
-    }
-
-    // Navigate through remaining path parts
-    for (var i = 1; i < pathParts.length; i++) {
-        var part = pathParts[i];
-        if (!part) continue;
-
-        var childCount = current.getcount("children");
-        var found = false;
-        for (var c = 0; c < childCount; c++) {
-            var childPath = current.unquotedpath + " children " + c;
-            var childName = apiGetStr(childPath, "name");
-            if (childName.toLowerCase() === part.toLowerCase()) {
-                current = new LiveAPI(childPath);
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            return {
-                path: path,
-                error: "Path part '" + part + "' not found",
-                items: []
-            };
-        }
-    }
-
-    // List children at current location
-    var childCount = current.getcount("children");
-    var items = [];
-    for (var j = 0; j < childCount; j++) {
-        var cPath = current.unquotedpath + " children " + j;
-        var cApi = new LiveAPI(cPath);
-        var hasChildren = cApi.getcount("children") > 0;
-        items.push({
-            name: apiGetStr(cPath, "name"),
-            is_folder: hasChildren,
-            is_device: apiGetNum(cPath, "is_device") ? true : false,
-            is_loadable: apiGetNum(cPath, "is_loadable") ? true : false,
-            uri: apiGetStr(cPath, "uri")
-        });
-    }
-
-    return {
-        path: path,
-        name: apiGetStr(current.unquotedpath, "name"),
-        uri: apiGetStr(current.unquotedpath, "uri"),
-        is_folder: current.getcount("children") > 0,
-        is_device: apiGetNum(current.unquotedpath, "is_device") ? true : false,
-        is_loadable: apiGetNum(current.unquotedpath, "is_loadable") ? true : false,
-        items: items
-    };
+    throw "Browser is not accessible from Max for Live devices. Use the Remote Script instead, or drag instruments manually from Ableton's browser.";
 }
 
 // ─── Simple Write Commands ───
@@ -1260,86 +1170,7 @@ function cmd_delete_device(params) {
 }
 
 function cmd_load_instrument_or_effect(params) {
-    var trackIndex = param(params, "track_index", 0);
-    var uri = param(params, "uri", "") || param(params, "item_uri", "");
-    var clipIndex = param(params, "clip_index", null);
-    var trackPath = getTrackPath(trackIndex);
-
-    if (!uri) throw "No URI provided";
-
-    // Find the browser item by URI using recursive search
-    var item = findBrowserItemByUri(uri);
-    if (!item) throw "Browser item with URI '" + uri + "' not found";
-
-    // Select the track
-    var songView = new LiveAPI("live_set view");
-    var trackApi = new LiveAPI(trackPath);
-    songView.set("selected_track", "id", trackApi.id);
-
-    // Select clip slot if specified
-    if (clipIndex !== null) {
-        var slotCount = apiGetCount(trackPath, "clip_slots");
-        if (clipIndex < slotCount) {
-            var slotApi = new LiveAPI(trackPath + " clip_slots " + clipIndex);
-            songView.set("highlighted_clip_slot", "id", slotApi.id);
-        }
-    }
-
-    // Load the item
-    var browser = new LiveAPI("live_app browser");
-    browser.call("load_item", item.id);
-
-    return {
-        loaded: true,
-        item_name: apiGetStr("id " + item.id, "name"),
-        track_name: apiGetStr(trackPath, "name"),
-        uri: uri
-    };
-}
-
-function findBrowserItemByUri(uri) {
-    // Iterate browser top-level children by index
-    var browser = new LiveAPI("live_app browser");
-    var childCount = browser.getcount("children");
-
-    for (var i = 0; i < childCount; i++) {
-        try {
-            var catApi = new LiveAPI("live_app browser children " + i);
-            if (!catApi.id || catApi.id === "0") continue;
-            var found = searchItemByUri(catApi, uri, 0, 10);
-            if (found) return found;
-        } catch (e) {
-            // Category not available
-        }
-    }
-    return null;
-}
-
-function searchItemByUri(api, uri, depth, maxDepth) {
-    if (depth >= maxDepth) return null;
-
-    // Check if this item matches
-    try {
-        var itemUri = apiGetStr(api.unquotedpath, "uri");
-        if (itemUri === uri) return api;
-    } catch (e) {}
-
-    // Search children
-    var childCount;
-    try {
-        childCount = api.getcount("children");
-    } catch (e) {
-        return null;
-    }
-
-    for (var i = 0; i < childCount; i++) {
-        var childPath = api.unquotedpath + " children " + i;
-        var childApi = new LiveAPI(childPath);
-        var found = searchItemByUri(childApi, uri, depth + 1, maxDepth);
-        if (found) return found;
-    }
-
-    return null;
+    throw "Browser/instrument loading is not accessible from Max for Live devices. Drag instruments manually from Ableton's browser, or use the Remote Script backend instead.";
 }
 
 function cmd_set_clip_envelope(params) {
