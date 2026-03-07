@@ -546,35 +546,29 @@ function cmd_get_browser_tree(params) {
     var categoryType = param(params, "category_type", "all");
     var categories = [];
 
-    var categoryNames = ["instruments", "sounds", "drums", "audio_effects", "midi_effects",
-                         "clips", "samples", "packs", "user_library", "current_project", "max_for_live"];
-    var displayNames = {
-        instruments: "Instruments", sounds: "Sounds", drums: "Drums",
-        audio_effects: "Audio Effects", midi_effects: "MIDI Effects",
-        clips: "Clips", samples: "Samples", packs: "Packs",
-        user_library: "User Library", current_project: "Current Project",
-        max_for_live: "Max for Live"
-    };
+    // In LiveAPI, browser children are accessed by index, not by name
+    var browser = new LiveAPI("live_app browser");
+    var childCount = browser.getcount("children");
 
-    for (var i = 0; i < categoryNames.length; i++) {
-        var catName = categoryNames[i];
-        if (categoryType !== "all" && categoryType !== catName) continue;
-
+    for (var i = 0; i < childCount; i++) {
+        var catPath = "live_app browser children " + i;
         try {
-            var catApi = new LiveAPI("live_app browser " + catName);
-            if (catApi.id && catApi.id !== "0") {
-                var catItem = {
-                    name: displayNames[catName] || catName,
-                    is_folder: true,
-                    is_device: false,
-                    is_loadable: false,
-                    uri: apiGetStr("live_app browser " + catName, "uri"),
-                    children: []
-                };
-                categories.push(catItem);
-            }
+            var catName = apiGetStr(catPath, "name");
+            var catNameLower = catName.toLowerCase().replace(/ /g, "_");
+
+            if (categoryType !== "all" && categoryType !== catNameLower
+                && categoryType !== catName.toLowerCase()) continue;
+
+            categories.push({
+                name: catName,
+                is_folder: true,
+                is_device: false,
+                is_loadable: false,
+                uri: apiGetStr(catPath, "uri"),
+                children: []
+            });
         } catch (e) {
-            // Category not available
+            // skip inaccessible
         }
     }
 
@@ -590,13 +584,22 @@ function cmd_get_browser_items_at_path(params) {
     if (pathParts.length === 0) throw "Invalid path";
 
     var rootCategory = pathParts[0].toLowerCase();
-    var browserPath = "live_app browser " + rootCategory;
 
-    var current;
-    try {
-        current = new LiveAPI(browserPath);
-        if (!current.id || current.id === "0") throw "not found";
-    } catch (e) {
+    // Find the root category by iterating browser children by index
+    var browser = new LiveAPI("live_app browser");
+    var browserChildCount = browser.getcount("children");
+    var current = null;
+
+    for (var r = 0; r < browserChildCount; r++) {
+        var rPath = "live_app browser children " + r;
+        var rName = apiGetStr(rPath, "name").toLowerCase().replace(/ /g, "_");
+        if (rName === rootCategory || apiGetStr(rPath, "name").toLowerCase() === rootCategory) {
+            current = new LiveAPI(rPath);
+            break;
+        }
+    }
+
+    if (!current) {
         return {
             path: path,
             error: "Unknown or unavailable category: " + rootCategory,
@@ -1156,14 +1159,15 @@ function cmd_add_notes_to_clip(params) {
     if (!apiGetNum(clipPath, "is_midi_clip")) throw "Not a MIDI clip";
 
     // Use set_notes protocol: call("notes", count), then per-note call("note", ...), then call("done")
+    // CRITICAL: time and duration must be strings with decimal points to avoid "Invalid syntax" bug
     clip.call("set_notes");
     clip.call("notes", notes.length);
     for (var i = 0; i < notes.length; i++) {
         var n = notes[i];
-        var pitch = n.pitch !== undefined ? n.pitch : 60;
-        var startTime = n.start_time !== undefined ? n.start_time : 0.0;
-        var duration = n.duration !== undefined ? n.duration : 0.25;
-        var velocity = n.velocity !== undefined ? n.velocity : 100;
+        var pitch = n.pitch !== undefined ? Math.floor(n.pitch) : 60;
+        var startTime = n.start_time !== undefined ? Number(n.start_time).toFixed(8) : "0.0";
+        var duration = n.duration !== undefined ? Number(n.duration).toFixed(8) : "0.25";
+        var velocity = n.velocity !== undefined ? Math.floor(n.velocity) : 100;
         var mute = n.mute ? 1 : 0;
         clip.call("note", pitch, startTime, duration, velocity, mute);
     }
@@ -1294,13 +1298,13 @@ function cmd_load_instrument_or_effect(params) {
 }
 
 function findBrowserItemByUri(uri) {
-    var categoryNames = ["instruments", "sounds", "drums", "audio_effects", "midi_effects",
-                         "clips", "samples", "packs", "user_library", "current_project", "max_for_live"];
+    // Iterate browser top-level children by index
+    var browser = new LiveAPI("live_app browser");
+    var childCount = browser.getcount("children");
 
-    for (var i = 0; i < categoryNames.length; i++) {
-        var catName = categoryNames[i];
+    for (var i = 0; i < childCount; i++) {
         try {
-            var catApi = new LiveAPI("live_app browser " + catName);
+            var catApi = new LiveAPI("live_app browser children " + i);
             if (!catApi.id || catApi.id === "0") continue;
             var found = searchItemByUri(catApi, uri, 0, 10);
             if (found) return found;
