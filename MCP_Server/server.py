@@ -118,7 +118,9 @@ class AbletonConnection:
             "create_scene", "delete_scene", "set_scene_name",
             "delete_track", "record_arrangement",
             "delete_device", "duplicate_track", "set_clip_loop",
-            "set_track_arm", "set_send_level", "set_time_signature", "set_metronome",
+            "set_track_arm", "set_send_level", "set_time_signature",
+            "set_track_monitoring", "get_track_routing",
+            "set_track_input_routing", "set_track_output_routing", "set_metronome",
             "set_clip_envelope", "clear_clip_envelope",
             "undo", "redo"
         ]
@@ -1579,6 +1581,71 @@ def redo(ctx: Context) -> str:
         return f"Error redoing: {str(e)}"
 
 # Main execution
+@mcp.tool()
+def set_track_monitoring(ctx: Context, track_index: int, state: int) -> str:
+    """Set track monitoring state.
+
+    Parameters:
+    - track_index: The index of the track
+    - state: 0=In, 1=Auto, 2=Off
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_monitoring", {"track_index": track_index, "state": state})
+        states = {0: "In", 1: "Auto", 2: "Off"}
+        return f"Set monitoring to {states.get(state, str(state))}"
+    except Exception as e:
+        logger.error(f"Error setting monitoring: {str(e)}")
+        return f"Error setting monitoring: {str(e)}"
+
+@mcp.tool()
+def get_track_routing(ctx: Context, track_index: int) -> str:
+    """Get input/output routing information for a track.
+
+    Parameters:
+    - track_index: The index of the track (0+ for regular, -1 for master, -2/-3 for returns)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("get_track_routing", {"track_index": track_index})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting routing: {str(e)}")
+        return f"Error getting routing: {str(e)}"
+
+@mcp.tool()
+def set_track_input_routing(ctx: Context, track_index: int, routing_type_name: str) -> str:
+    """Set the input routing of a track by name.
+
+    Parameters:
+    - track_index: The index of the track
+    - routing_type_name: Name of the routing type (use get_track_routing to see available options)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_input_routing", {"track_index": track_index, "routing_type_name": routing_type_name})
+        return f"Set input routing to '{routing_type_name}'"
+    except Exception as e:
+        logger.error(f"Error setting input routing: {str(e)}")
+        return f"Error setting input routing: {str(e)}"
+
+@mcp.tool()
+def set_track_output_routing(ctx: Context, track_index: int, routing_type_name: str) -> str:
+    """Set the output routing of a track by name.
+
+    Parameters:
+    - track_index: The index of the track
+    - routing_type_name: Name of the routing type (use get_track_routing to see available options)
+    """
+    try:
+        ableton = get_ableton_connection()
+        result = ableton.send_command("set_track_output_routing", {"track_index": track_index, "routing_type_name": routing_type_name})
+        return f"Set output routing to '{routing_type_name}'"
+    except Exception as e:
+        logger.error(f"Error setting output routing: {str(e)}")
+        return f"Error setting output routing: {str(e)}"
+
+
 def main():
     """Run the MCP server"""
     mcp.run()

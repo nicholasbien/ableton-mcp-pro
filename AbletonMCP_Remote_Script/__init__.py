@@ -227,6 +227,9 @@ class AbletonMCP(ControlSurface):
             elif command_type == "get_track_info":
                 track_index = params.get("track_index", 0)
                 response["result"] = self._get_track_info(track_index)
+            elif command_type == "get_track_routing":
+                track_index = params.get("track_index", 0)
+                response["result"] = self._get_track_routing(track_index)
             # Commands that modify Live's state should be scheduled on the main thread
             elif command_type == "get_device_parameters":
                 track_index = params.get("track_index", 0)
@@ -277,6 +280,8 @@ class AbletonMCP(ControlSurface):
                                  "create_audio_track", "delete_track",
                                  "delete_device", "duplicate_track", "set_clip_loop",
                                  "set_track_arm", "set_send_level", "set_time_signature",
+                                 "set_track_monitoring", "set_track_input_routing",
+                                 "set_track_output_routing",
                                  "set_metronome", "set_clip_envelope", "clear_clip_envelope",
                                  "undo", "redo"]:
                 # Use a thread-safe approach with a response queue
@@ -293,6 +298,18 @@ class AbletonMCP(ControlSurface):
                             track_index = params.get("track_index", 0)
                             name = params.get("name", "")
                             result = self._set_track_name(track_index, name)
+                        elif command_type == "set_track_monitoring":
+                            track_index = params.get("track_index", 0)
+                            state = params.get("state", 1)
+                            result = self._set_track_monitoring(track_index, state)
+                        elif command_type == "set_track_input_routing":
+                            track_index = params.get("track_index", 0)
+                            routing_type_name = params.get("routing_type_name", "")
+                            result = self._set_track_input_routing(track_index, routing_type_name)
+                        elif command_type == "set_track_output_routing":
+                            track_index = params.get("track_index", 0)
+                            routing_type_name = params.get("routing_type_name", "")
+                            result = self._set_track_output_routing(track_index, routing_type_name)
                         elif command_type == "create_clip":
                             track_index = params.get("track_index", 0)
                             clip_index = params.get("clip_index", 0)
@@ -609,6 +626,69 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error getting track info: " + str(e))
             raise
     
+    def _set_track_monitoring(self, track_index, state):
+        """Set track monitoring state (0=In, 1=Auto, 2=Off)"""
+        try:
+            track = self._get_track(track_index)
+            track.current_monitoring_state = state
+            return {"monitoring_state": track.current_monitoring_state}
+        except Exception as e:
+            self.log_message("Error setting track monitoring: " + str(e))
+            raise
+
+    def _get_track_routing(self, track_index):
+        """Get input/output routing info for a track"""
+        try:
+            track = self._get_track(track_index)
+            result = {
+                "input_routing_type": str(track.input_routing_type.display_name) if hasattr(track.input_routing_type, 'display_name') else str(track.input_routing_type),
+                "output_routing_type": str(track.output_routing_type.display_name) if hasattr(track.output_routing_type, 'display_name') else str(track.output_routing_type),
+            }
+            if hasattr(track, 'available_input_routing_types'):
+                result["available_input_routing_types"] = [
+                    {"display_name": str(r.display_name) if hasattr(r, 'display_name') else str(r)}
+                    for r in track.available_input_routing_types
+                ]
+            if hasattr(track, 'available_output_routing_types'):
+                result["available_output_routing_types"] = [
+                    {"display_name": str(r.display_name) if hasattr(r, 'display_name') else str(r)}
+                    for r in track.available_output_routing_types
+                ]
+            return result
+        except Exception as e:
+            self.log_message("Error getting track routing: " + str(e))
+            raise
+
+    def _set_track_input_routing(self, track_index, routing_type_name):
+        """Set track input routing by name"""
+        try:
+            track = self._get_track(track_index)
+            for routing_type in track.available_input_routing_types:
+                name = str(routing_type.display_name) if hasattr(routing_type, 'display_name') else str(routing_type)
+                if name == routing_type_name:
+                    track.input_routing_type = routing_type
+                    return {"input_routing_type": routing_type_name}
+            raise Exception("Routing type not found: " + routing_type_name)
+        except Exception as e:
+            self.log_message("Error setting track input routing: " + str(e))
+            raise
+
+    def _set_track_output_routing(self, track_index, routing_type_name):
+        """Set track output routing by name"""
+        try:
+            track = self._get_track(track_index)
+            available = []
+            for routing_type in track.available_output_routing_types:
+                name = str(routing_type.display_name) if hasattr(routing_type, 'display_name') else str(routing_type)
+                available.append(name)
+                if name.lower() == routing_type_name.lower():
+                    track.output_routing_type = routing_type
+                    return {"output_routing_type": name}
+            raise Exception("Routing type not found: " + routing_type_name + ". Available: " + ", ".join(available))
+        except Exception as e:
+            self.log_message("Error setting track output routing: " + str(e))
+            raise
+
     def _get_track(self, track_index):
         """Get a track by index. Use -1 for master track, -2/-3/etc for return tracks."""
         if track_index == -1:
