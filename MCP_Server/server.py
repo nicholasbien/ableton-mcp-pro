@@ -105,6 +105,7 @@ class AbletonConnection:
             "create_midi_track", "create_audio_track", "set_track_name",
             "create_clip", "create_audio_clip", "create_arrangement_audio_clip",
             "create_arrangement_midi_clip", "delete_arrangement_clip",
+            "create_arrangement_audio_clips_batch",
             "add_notes_to_clip", "set_clip_name",
             "set_tempo", "fire_clip", "stop_clip", "set_device_parameter",
             "batch_set_device_parameters",
@@ -466,12 +467,55 @@ def create_arrangement_midi_clip(
         return f"Error creating arrangement MIDI clip: {str(e)}"
 
 @mcp.tool()
+def create_arrangement_audio_clips_batch(
+    ctx: Context,
+    track_index: int,
+    file_path: str,
+    times: List[float],
+    length: Optional[float] = None,
+    start_offset: Optional[float] = None,
+) -> str:
+    """
+    Place the SAME audio sample at multiple beat positions on the same track in one call.
+    Use this for repeated percussion hits (e.g. 32 kicks for a 4-on-floor pattern) instead
+    of calling create_arrangement_audio_clip 32 times.
+
+    Parameters:
+    - track_index: Index of an audio track
+    - file_path: Absolute path to the audio file
+    - times: List of beat positions where the sample should be placed
+    - length: Optional clip length in beats applied to all placements
+    - start_offset: Optional offset into the source sample applied to all placements
+    """
+    try:
+        ableton = get_ableton_connection()
+        params = {
+            "track_index": track_index,
+            "file_path": file_path,
+            "times": times,
+        }
+        if length is not None:
+            params["length"] = length
+        if start_offset is not None:
+            params["start_offset"] = start_offset
+        result = ableton.send_command("create_arrangement_audio_clips_batch", params)
+        return (
+            f"Placed {result.get('placed_count', 0)}/{len(times)} clips "
+            f"of '{file_path.split('/')[-1]}' on track {track_index}"
+            + (f" ({result.get('failed_count', 0)} failed)" if result.get('failed_count', 0) else "")
+        )
+    except Exception as e:
+        logger.error(f"Error batch-placing arrangement audio clips: {str(e)}")
+        return f"Error batch-placing arrangement audio clips: {str(e)}"
+
+@mcp.tool()
 def create_arrangement_audio_clip(
     ctx: Context,
     track_index: int,
     file_path: str,
     time: float,
     length: Optional[float] = None,
+    start_offset: Optional[float] = None,
 ) -> str:
     """
     Create an audio clip in the arrangement view at a given position.
@@ -482,6 +526,9 @@ def create_arrangement_audio_clip(
     - file_path: Absolute path to an audio file (wav, aiff, flac, mp3, etc.)
     - time: Arrangement position in beats where the clip should start
     - length: Optional clip length in beats. If omitted, the file's natural length is used.
+    - start_offset: Optional offset in beats into the source sample to begin playback from.
+                    Use this when an FX sample has whoosh/preroll before the actual peak —
+                    pass the preroll length here so the peak lands on the placement beat.
     """
     try:
         ableton = get_ableton_connection()
@@ -492,6 +539,8 @@ def create_arrangement_audio_clip(
         }
         if length is not None:
             params["length"] = length
+        if start_offset is not None:
+            params["start_offset"] = start_offset
         result = ableton.send_command("create_arrangement_audio_clip", params)
         return (
             f"Created arrangement audio clip '{result.get('name', '')}' "

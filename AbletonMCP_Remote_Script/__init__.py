@@ -261,6 +261,7 @@ class AbletonMCP(ControlSurface):
             elif command_type in ["create_midi_track", "set_track_name",
                                  "create_clip", "create_audio_clip", "create_arrangement_audio_clip",
                                  "create_arrangement_midi_clip", "delete_arrangement_clip",
+                                 "create_arrangement_audio_clips_batch",
                                  "add_notes_to_clip", "set_clip_name",
                                  "set_tempo", "fire_clip", "stop_clip",
                                  "start_playback", "stop_playback", "play_arrangement",
@@ -308,7 +309,15 @@ class AbletonMCP(ControlSurface):
                             file_path = params.get("file_path", "")
                             time = params.get("time", 0.0)
                             length = params.get("length", None)
-                            result = self._create_arrangement_audio_clip(track_index, file_path, time, length)
+                            start_offset = params.get("start_offset", None)
+                            result = self._create_arrangement_audio_clip(track_index, file_path, time, length, start_offset)
+                        elif command_type == "create_arrangement_audio_clips_batch":
+                            track_index = params.get("track_index", 0)
+                            file_path = params.get("file_path", "")
+                            times = params.get("times", [])
+                            length = params.get("length", None)
+                            start_offset = params.get("start_offset", None)
+                            result = self._create_arrangement_audio_clips_batch(track_index, file_path, times, length, start_offset)
                         elif command_type == "create_arrangement_midi_clip":
                             track_index = params.get("track_index", 0)
                             time = params.get("time", 0.0)
@@ -1761,11 +1770,33 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error creating arrangement MIDI clip: " + str(e))
             raise
 
-    def _create_arrangement_audio_clip(self, track_index, file_path, time, length=None):
+    def _create_arrangement_audio_clips_batch(self, track_index, file_path, times, length=None, start_offset=None):
+        """Place the same audio sample at multiple positions on a track in one round-trip.
+        Useful for repeated percussion hits (kick, hat, clap patterns).
+        """
+        results = []
+        for t in times:
+            try:
+                r = self._create_arrangement_audio_clip(track_index, file_path, float(t), length, start_offset)
+                results.append({"time": float(t), "ok": True})
+            except Exception as e:
+                results.append({"time": float(t), "ok": False, "error": str(e)})
+        return {
+            "track_index": track_index,
+            "file_path": file_path,
+            "placed_count": sum(1 for r in results if r["ok"]),
+            "failed_count": sum(1 for r in results if not r["ok"]),
+            "results": results,
+        }
+
+    def _create_arrangement_audio_clip(self, track_index, file_path, time, length=None, start_offset=None):
         """Create an audio clip from a file path in the arrangement view at a given position.
 
         Uses Live 11+ Track.create_audio_clip(file_path, position) API.
         length is optional - if provided, the clip is trimmed/looped to that length.
+        start_offset is optional - in beats, skips the leading portion of the sample
+            (useful when an FX sample has whoosh/preroll before the actual hit, so the
+            peak lands on the placement beat).
         """
         try:
             if track_index < 0 or track_index >= len(self._song.tracks):
@@ -1781,6 +1812,12 @@ class AbletonMCP(ControlSurface):
 
             # Live 11+ API: create_audio_clip(file_path, position) returns the new Clip
             clip = track.create_audio_clip(file_path, float(time))
+
+            if start_offset is not None and clip is not None:
+                try:
+                    clip.start_marker = float(time) + float(start_offset)
+                except Exception:
+                    pass  # start_marker adjustment is best-effort
 
             if length is not None and clip is not None:
                 try:
