@@ -23,12 +23,12 @@ Responses are JSON objects: `{"status": "success", "result": {...}}`
 
 ## Max for Live Device (Alternative to Remote Script)
 
-The Max for Live device (`MaxForLive/AbletonMCP.amxd`) is a drag-and-drop alternative to the Remote Script. Same TCP protocol on port 9877, same MCP server — just a different backend inside Ableton. Only one can run at a time.
+The Max for Live device (`MaxForLive/AbletonMCP.amxd`) is a drag-and-drop alternative to the Remote Script. Same TCP protocol, same MCP server — just a different backend inside Ableton. The device listens on port **9878** (the Remote Script uses 9877) so both can run at once. Point the MCP server at the device with `ABLETON_PORT=9878` (and `ABLETON_HOST` if not localhost). The port is an argument on the `node.script` box in the patcher; change `PORT` in `build_amxd.py` and rebuild.
 
 ### Architecture
 
 ```
-MCP Server (unchanged) → TCP:9877 → node.script (Node.js TCP + JSON) → Max messages → js (ES5 LiveAPI) → response back
+MCP Server (unchanged) → TCP:9878 → node.script (Node.js TCP + JSON) → Max messages → js (ES5 LiveAPI) → response back
 ```
 
 Two JS runtimes inside the device:
@@ -48,16 +48,18 @@ They communicate via Max messages passing JSON strings (not dicts — see quirks
    cp MaxForLive/code/lom-handler.js ~/Music/Ableton/User\ Library/Presets/Audio\ Effects/Max\ Audio\ Effect/AbletonMCP/
    ```
 3. In Ableton, drag `AbletonMCP` from the browser onto any track
-4. Check the Max console for "AbletonMCP: Listening on port 9877"
+4. Check the Max console for "AbletonMCP: Listening on port 9878"
 
 **JS files must be flat next to the .amxd** — subfolder paths don't resolve reliably for unfrozen devices.
 
 ### Updating Code
 
-`node.script` caches JS files aggressively. After changing `tcp-server.js` or `lom-handler.js`:
+`lom-handler.js` sets `autowatch = 1`, so the `js` object reloads it whenever the copy in the User Library changes on disk — no restart needed for LOM handler changes. Note the queue and any in-flight `record_arrangement` are reset on reload.
+
+`node.script` caches `tcp-server.js` aggressively. After changing it:
 1. Copy updated files to the User Library path above
 2. **Fully quit and reopen Ableton** — deleting and re-dragging the device is NOT enough
-3. Verify "Listening on port 9877" appears in Max console
+3. Verify "Listening on port 9878" appears in Max console
 
 ### .amxd Binary Format
 

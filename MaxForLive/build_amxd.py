@@ -7,6 +7,10 @@ import time
 
 DEVICE_TYPE_AUDIO_EFFECT = 0x61616161  # 'aaaa'
 
+# TCP port the device listens on. 9878 by default so it can coexist with the
+# Python Remote Script (9877). Point the MCP server at it with ABLETON_PORT=9878.
+PORT = 9878
+
 patcher = {
     "patcher": {
         "fileversion": 1,
@@ -61,7 +65,7 @@ patcher = {
                     "numoutlets": 1,
                     "outlettype": [""],
                     "patching_rect": [30.0, 30.0, 190.0, 22.0],
-                    "text": "node.script tcp-server.js"
+                    "text": "node.script tcp-server.js " + str(PORT)
                 }
             },
             {
@@ -84,7 +88,7 @@ patcher = {
                     "patching_rect": [30.0, 120.0, 220.0, 20.0],
                     "presentation": 1,
                     "presentation_rect": [10.0, 10.0, 226.0, 20.0],
-                    "text": "AbletonMCP — TCP:9877"
+                    "text": "AbletonMCP — TCP:" + str(PORT)
                 }
             },
             {

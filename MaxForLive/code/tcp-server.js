@@ -4,7 +4,9 @@
 var maxAPI = require("max-api");
 var net = require("net");
 
-var PORT = 9877;
+// Port comes from the node.script box arguments ("node.script tcp-server.js 9878").
+// Default 9878 so the device can run alongside the Python Remote Script on 9877.
+var PORT = parseInt(process.argv[2], 10) || 9878;
 var server = null;
 var pendingRequests = {}; // requestId -> socket
 var nextRequestId = 1;
@@ -51,7 +53,7 @@ function startServer() {
 
     server.on("error", function (err) {
         if (err.code === "EADDRINUSE") {
-            maxAPI.post("AbletonMCP: Port " + PORT + " already in use. Is the Remote Script running?");
+            maxAPI.post("AbletonMCP: Port " + PORT + " already in use. Another copy of this device, or the Remote Script on the same port?");
         } else {
             maxAPI.post("AbletonMCP: Server error: " + err.message);
         }

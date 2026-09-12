@@ -1,5 +1,6 @@
 # ableton_mcp_server.py
 from mcp.server.fastmcp import FastMCP, Context
+import os
 import socket
 import json
 import logging
@@ -242,7 +243,10 @@ def get_ableton_connection():
         for attempt in range(1, max_attempts + 1):
             try:
                 logger.info(f"Connecting to Ableton (attempt {attempt}/{max_attempts})...")
-                _ableton_connection = AbletonConnection(host="localhost", port=9877)
+                _ableton_connection = AbletonConnection(
+                    host=os.environ.get("ABLETON_HOST", "localhost"),
+                    # 9877 = Python Remote Script, 9878 = Max for Live device
+                    port=int(os.environ.get("ABLETON_PORT", "9877")))
                 if _ableton_connection.connect():
                     logger.info("Created new persistent connection to Ableton")
                     
