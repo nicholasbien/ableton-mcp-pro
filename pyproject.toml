@@ -19,7 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ai = [
-    "midigenai @ git+https://github.com/nicholasbien/midigenai@pip-install-and-hf-download",
+    "midigenai @ git+https://github.com/nicholasbien/midigenai@main",
     "torch",
     "miditok",
     "symusic",
