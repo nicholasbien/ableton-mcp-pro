@@ -320,7 +320,7 @@ class AbletonMCP(ControlSurface):
                         elif command_type == "set_track_input_routing":
                             track_index = params.get("track_index", 0)
                             routing_type_name = params.get("routing_type_name", "")
-                            result = self._set_track_input_routing(track_index, routing_type_name)
+                            result = self._set_track_input_routing(track_index, routing_type_name, params.get("channel_name"))
                         elif command_type == "set_track_output_routing":
                             track_index = params.get("track_index", 0)
                             routing_type_name = params.get("routing_type_name", "")
@@ -713,8 +713,9 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error getting track routing: " + str(e))
             raise
 
-    def _set_track_input_routing(self, track_index, routing_type_name):
-        """Set track input routing by name"""
+    def _set_track_input_routing(self, track_index, routing_type_name, channel_name=None):
+        """Set track input routing by name; `channel_name` picks the channel ("Ch. 5", "1/2",
+        "Post FX"), otherwise the type's first channel."""
         try:
             track = self._get_track(track_index)
             for routing_type in track.available_input_routing_types:
@@ -723,15 +724,27 @@ class AbletonMCP(ControlSurface):
                     track.input_routing_type = routing_type
                     # the channel is a separate property and can stay pointed at the previous
                     # type's channel (recording then captures silence); pick the new type's first
-                    channel_name = None
+                    chosen = None
                     try:
                         channels = list(track.available_input_routing_channels)
-                        if channels:
-                            track.input_routing_channel = channels[0]
-                            channel_name = str(channels[0].display_name)
+                        pick = channels[0] if channels else None
+                        if channel_name:
+                            want = str(channel_name).lower()
+                            for c in channels:
+                                if str(c.display_name).lower() == want:
+                                    pick = c
+                                    break
+                            else:
+                                raise Exception("no input channel %r; available: %s" % (
+                                    channel_name, ", ".join(str(c.display_name) for c in channels)))
+                        if pick is not None:
+                            track.input_routing_channel = pick
+                            chosen = str(pick.display_name)
                     except Exception as ce:
+                        if channel_name:
+                            raise
                         self.log_message("input channel not set: " + str(ce))
-                    return {"input_routing_type": routing_type_name, "input_routing_channel": channel_name}
+                    return {"input_routing_type": routing_type_name, "input_routing_channel": chosen}
             raise Exception("Routing type not found: " + routing_type_name)
         except Exception as e:
             self.log_message("Error setting track input routing: " + str(e))
