@@ -256,6 +256,10 @@ class AbletonMCP(ControlSurface):
                 device_index = params.get("device_index", 0)
                 parameter_index = params.get("parameter_index", 0)
                 response["result"] = self._get_clip_envelope(track_index, clip_index, device_index, parameter_index)
+            elif command_type == "get_drum_pads":
+                track_index = params.get("track_index", 0)
+                device_index = params.get("device_index", 0)
+                response["result"] = self._get_drum_pads(track_index, device_index)
             elif command_type == "record_arrangement":
                 # Runs on socket thread with schedule_message for main thread ops
                 sections = params.get("sections", [])
@@ -283,7 +287,11 @@ class AbletonMCP(ControlSurface):
                                  "set_track_monitoring", "set_track_input_routing",
                                  "set_track_output_routing",
                                  "set_metronome", "set_clip_envelope", "clear_clip_envelope",
-                                 "undo", "redo"]:
+                                 "undo", "redo",
+                                 "remove_notes", "quantize_clip", "duplicate_clip_loop", "duplicate_region",
+                                 "set_device_enabled", "create_return_track", "delete_return_track",
+                                 "stop_all_clips", "set_clip_gain", "set_clip_pitch",
+                                 "set_clip_warping", "set_clip_warp_mode"]:
                 # Use a thread-safe approach with a response queue
                 response_queue = queue.Queue()
                 
@@ -407,7 +415,7 @@ class AbletonMCP(ControlSurface):
                             on = params.get("on", False)
                             result = self._set_arrangement_overdub(on)
                         elif command_type == "set_back_to_arranger":
-                            result = self._set_back_to_arranger()
+                            result = self._set_back_to_arranger(params.get("value", False))
                         elif command_type == "set_arrangement_loop":
                             on = params.get("on", True)
                             start = params.get("start", 0.0)
@@ -493,6 +501,38 @@ class AbletonMCP(ControlSurface):
                             result = self._undo()
                         elif command_type == "redo":
                             result = self._redo()
+                        elif command_type == "remove_notes":
+                            result = self._remove_notes(params.get("track_index", 0), params.get("clip_index", 0),
+                                                        params.get("from_pitch", 0), params.get("pitch_span", 128),
+                                                        params.get("from_time", 0.0), params.get("time_span", -1.0), aci=params.get("arrangement_clip_index"))
+                        elif command_type == "quantize_clip":
+                            result = self._quantize_clip(params.get("track_index", 0), params.get("clip_index", 0),
+                                                         params.get("grid", 5), params.get("strength", 1.0), aci=params.get("arrangement_clip_index"))
+                        elif command_type == "duplicate_clip_loop":
+                            result = self._duplicate_clip_loop(params.get("track_index", 0), params.get("clip_index", 0), aci=params.get("arrangement_clip_index"))
+                        elif command_type == "duplicate_region":
+                            result = self._duplicate_region(params.get("track_index", 0), params.get("clip_index", 0),
+                                                            params.get("region_start", 0.0), params.get("region_length", 4.0),
+                                                            params.get("destination_time", 4.0), params.get("pitch", -1),
+                                                            params.get("transposition_amount", 0), aci=params.get("arrangement_clip_index"))
+                        elif command_type == "set_device_enabled":
+                            result = self._set_device_enabled(params.get("track_index", 0), params.get("device_index", 0),
+                                                              params.get("enabled", True))
+                        elif command_type == "create_return_track":
+                            result = self._create_return_track()
+                        elif command_type == "delete_return_track":
+                            result = self._delete_return_track(params.get("index", 0))
+                        elif command_type == "stop_all_clips":
+                            result = self._stop_all_clips(params.get("quantized", True))
+                        elif command_type == "set_clip_gain":
+                            result = self._set_clip_gain(params.get("track_index", 0), params.get("clip_index", 0), params.get("gain", 0.0), aci=params.get("arrangement_clip_index"))
+                        elif command_type == "set_clip_pitch":
+                            result = self._set_clip_pitch(params.get("track_index", 0), params.get("clip_index", 0),
+                                                          params.get("coarse", None), params.get("fine", None), aci=params.get("arrangement_clip_index"))
+                        elif command_type == "set_clip_warping":
+                            result = self._set_clip_warping(params.get("track_index", 0), params.get("clip_index", 0), params.get("warping", True), aci=params.get("arrangement_clip_index"))
+                        elif command_type == "set_clip_warp_mode":
+                            result = self._set_clip_warp_mode(params.get("track_index", 0), params.get("clip_index", 0), params.get("warp_mode", 0), aci=params.get("arrangement_clip_index"))
 
                         # Put the result in the queue
                         response_queue.put({"status": "success", "result": result})
@@ -618,6 +658,7 @@ class AbletonMCP(ControlSurface):
                 "arm": track.arm,
                 "volume": track.mixer_device.volume.value,
                 "panning": track.mixer_device.panning.value,
+                "output_meter_level": getattr(track, "output_meter_level", None),   # 0-1, live signal at the track output
                 "clip_slots": clip_slots,
                 "devices": devices
             }
@@ -644,6 +685,12 @@ class AbletonMCP(ControlSurface):
                 "input_routing_type": str(track.input_routing_type.display_name) if hasattr(track.input_routing_type, 'display_name') else str(track.input_routing_type),
                 "output_routing_type": str(track.output_routing_type.display_name) if hasattr(track.output_routing_type, 'display_name') else str(track.output_routing_type),
             }
+            try:
+                ch = getattr(track, "input_routing_channel", None)
+                result["input_routing_channel"] = str(ch.display_name) if ch is not None else None
+                result["available_input_routing_channels"] = [str(c.display_name) for c in track.available_input_routing_channels]
+            except Exception:
+                pass
             if hasattr(track, 'available_input_routing_types'):
                 result["available_input_routing_types"] = [
                     {"display_name": str(r.display_name) if hasattr(r, 'display_name') else str(r)}
@@ -667,7 +714,17 @@ class AbletonMCP(ControlSurface):
                 name = str(routing_type.display_name) if hasattr(routing_type, 'display_name') else str(routing_type)
                 if name == routing_type_name:
                     track.input_routing_type = routing_type
-                    return {"input_routing_type": routing_type_name}
+                    # the channel is a separate property and can stay pointed at the previous
+                    # type's channel (recording then captures silence); pick the new type's first
+                    channel_name = None
+                    try:
+                        channels = list(track.available_input_routing_channels)
+                        if channels:
+                            track.input_routing_channel = channels[0]
+                            channel_name = str(channels[0].display_name)
+                    except Exception as ce:
+                        self.log_message("input channel not set: " + str(ce))
+                    return {"input_routing_type": routing_type_name, "input_routing_channel": channel_name}
             raise Exception("Routing type not found: " + routing_type_name)
         except Exception as e:
             self.log_message("Error setting track input routing: " + str(e))
@@ -816,12 +873,14 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error setting arrangement overdub: " + str(e))
             raise
 
-    def _set_back_to_arranger(self):
-        """Return to arrangement view from session"""
+    def _set_back_to_arranger(self, value=False):
+        """Song.back_to_arranger is True while session clips override the arrangement (the
+        'Back to Arrangement' button is lit). Setting it False is what clicking that button
+        does: the arrangement plays again. Default False; pass True to hand control to session."""
         try:
-            self._song.back_to_arranger = True
+            self._song.back_to_arranger = bool(value)
             return {
-                "back_to_arranger": True
+                "back_to_arranger": self._song.back_to_arranger
             }
         except Exception as e:
             self.log_message("Error setting back to arranger: " + str(e))
@@ -2049,7 +2108,7 @@ class AbletonMCP(ControlSurface):
         """Stop session clips, return to arrangement, optionally seek, and play."""
         try:
             self._song.stop_all_clips()
-            self._song.back_to_arranger = True
+            self._song.back_to_arranger = False      # False = arrangement plays (True = session overrides it)
             if time is not None:
                 self._song.current_song_time = float(time)
             self._song.start_playing()
@@ -2260,6 +2319,187 @@ class AbletonMCP(ControlSurface):
     
     # Helper methods
     
+    # ------------------------------------------------------------------
+    # Clip editing, device bypass, return tracks, drum pads
+    # (ported from the missing-features branch: the subset an agent
+    # actually reaches for; see MISSING_FEATURES.md for the rest)
+    # ------------------------------------------------------------------
+    def _session_clip(self, track_index, clip_index, midi=None, arrangement_clip_index=None):
+        """A clip: session slot `clip_index`, or `track.arrangement_clips[arrangement_clip_index]`
+        when that is given (audio clips can only be created in the arrangement over the socket).
+        `midi` True/False asserts the clip type."""
+        track = self._get_track(track_index)
+        if arrangement_clip_index is not None:
+            clips = list(track.arrangement_clips)
+            if arrangement_clip_index < 0 or arrangement_clip_index >= len(clips):
+                raise IndexError("Arrangement clip index out of range")
+            clip = clips[arrangement_clip_index]
+        else:
+            if clip_index < 0 or clip_index >= len(track.clip_slots):
+                raise IndexError("Clip index out of range")
+            slot = track.clip_slots[clip_index]
+            if not slot.has_clip:
+                raise Exception("No clip in slot {0} of track {1}".format(clip_index, track_index))
+            clip = slot.clip
+        if midi is True and not clip.is_midi_clip:
+            raise Exception("Not a MIDI clip")
+        if midi is False and not clip.is_audio_clip:
+            raise Exception("Not an audio clip")
+        return clip
+
+    def _remove_notes(self, track_index, clip_index, from_pitch, pitch_span, from_time, time_span, aci=None):
+        """Remove the notes inside a pitch/time window. time_span < 0 = to the end of the clip."""
+        try:
+            clip = self._session_clip(track_index, clip_index, midi=True, arrangement_clip_index=aci)
+            if time_span is None or time_span < 0:
+                time_span = max(clip.length - from_time, 0.0)
+            before = len(clip.get_notes_extended(0, 128, 0.0, clip.length))
+            clip.remove_notes_extended(from_pitch, pitch_span, from_time, time_span)
+            after = len(clip.get_notes_extended(0, 128, 0.0, clip.length))
+            return {"removed": before - after, "remaining": after}
+        except Exception as e:
+            self.log_message("Error removing notes: " + str(e))
+            raise
+
+    def _quantize_clip(self, track_index, clip_index, grid, strength, aci=None):
+        """clip.quantize(grid, strength); grid is Live's RecordingQuantization enum, verified
+        on Live 12: 1=1/4, 2=1/8, 3=1/8+1/8T, 4=1/8T, 5=1/16, 6=1/16+1/16T, 7=1/16T, 8=1/32."""
+        try:
+            clip = self._session_clip(track_index, clip_index, arrangement_clip_index=aci)
+            clip.quantize(int(grid), float(strength))
+            return {"quantized": True, "grid": int(grid), "strength": float(strength)}
+        except Exception as e:
+            self.log_message("Error quantizing clip: " + str(e))
+            raise
+
+    def _duplicate_clip_loop(self, track_index, clip_index, aci=None):
+        """Double the loop and copy its contents into the new half."""
+        try:
+            clip = self._session_clip(track_index, clip_index, arrangement_clip_index=aci)
+            clip.duplicate_loop()
+            return {"length": clip.length, "loop_start": clip.loop_start, "loop_end": clip.loop_end}
+        except Exception as e:
+            self.log_message("Error duplicating clip loop: " + str(e))
+            raise
+
+    def _duplicate_region(self, track_index, clip_index, region_start, region_length, destination_time,
+                          pitch=-1, transposition_amount=0, aci=None):
+        """Copy [region_start, +region_length) to destination_time; pitch -1 = all pitches."""
+        try:
+            clip = self._session_clip(track_index, clip_index, midi=True, arrangement_clip_index=aci)
+            clip.duplicate_region(float(region_start), float(region_length), float(destination_time),
+                                  int(pitch), int(transposition_amount))
+            return {"duplicated": True, "length": clip.length}
+        except Exception as e:
+            self.log_message("Error duplicating region: " + str(e))
+            raise
+
+    def _set_device_enabled(self, track_index, device_index, enabled):
+        """Bypass / re-enable a device through its 'Device On' parameter (works for master and returns too)."""
+        try:
+            track = self._get_track(track_index)
+            if device_index < 0 or device_index >= len(track.devices):
+                raise IndexError("Device index out of range")
+            device = track.devices[device_index]
+            for param in device.parameters:
+                if param.name == "Device On":
+                    param.value = 1.0 if enabled else 0.0
+                    return {"enabled": bool(enabled), "device_name": device.name}
+            raise Exception("Device has no 'Device On' parameter")
+        except Exception as e:
+            self.log_message("Error setting device enabled: " + str(e))
+            raise
+
+    def _create_return_track(self):
+        try:
+            self._song.create_return_track()
+            return {"return_track_count": len(self._song.return_tracks), "name": self._song.return_tracks[-1].name}
+        except Exception as e:
+            self.log_message("Error creating return track: " + str(e))
+            raise
+
+    def _delete_return_track(self, index):
+        try:
+            if index < 0 or index >= len(self._song.return_tracks):
+                raise IndexError("Return track index out of range")
+            self._song.delete_return_track(index)
+            return {"return_track_count": len(self._song.return_tracks)}
+        except Exception as e:
+            self.log_message("Error deleting return track: " + str(e))
+            raise
+
+    def _stop_all_clips(self, quantized=True):
+        try:
+            self._song.stop_all_clips(bool(quantized))
+            return {"stopped": True}
+        except Exception as e:
+            self.log_message("Error stopping all clips: " + str(e))
+            raise
+
+    def _get_drum_pads(self, track_index, device_index):
+        """The filled pads of a Drum Rack: note number, pad name, and the device on the pad."""
+        try:
+            track = self._get_track(track_index)
+            if device_index < 0 or device_index >= len(track.devices):
+                raise IndexError("Device index out of range")
+            device = track.devices[device_index]
+            if not hasattr(device, "drum_pads"):
+                raise Exception("Device '{0}' is not a Drum Rack".format(device.name))
+            pads = []
+            for pad in device.drum_pads:
+                if not pad.chains:
+                    continue
+                info = {"note": pad.note, "name": pad.name, "mute": pad.mute, "solo": pad.solo}
+                if pad.chains[0].devices:
+                    info["device"] = pad.chains[0].devices[0].name
+                pads.append(info)
+            return {"device": device.name, "pads": pads, "total_pads": len(device.drum_pads)}
+        except Exception as e:
+            self.log_message("Error getting drum pads: " + str(e))
+            raise
+
+    def _set_clip_gain(self, track_index, clip_index, gain, aci=None):
+        """Audio clip gain, normalized 0-1 (0.4 is about 0 dB)."""
+        try:
+            clip = self._session_clip(track_index, clip_index, midi=False, arrangement_clip_index=aci)
+            clip.gain = float(gain)
+            return {"gain": clip.gain, "gain_display": getattr(clip, "gain_display_string", "")}
+        except Exception as e:
+            self.log_message("Error setting clip gain: " + str(e))
+            raise
+
+    def _set_clip_pitch(self, track_index, clip_index, coarse=None, fine=None, aci=None):
+        """Audio clip transpose: coarse in semitones (-48..48), fine in cents (-500..500)."""
+        try:
+            clip = self._session_clip(track_index, clip_index, midi=False, arrangement_clip_index=aci)
+            if coarse is not None:
+                clip.pitch_coarse = int(coarse)
+            if fine is not None:
+                clip.pitch_fine = int(fine)
+            return {"pitch_coarse": clip.pitch_coarse, "pitch_fine": clip.pitch_fine}
+        except Exception as e:
+            self.log_message("Error setting clip pitch: " + str(e))
+            raise
+
+    def _set_clip_warping(self, track_index, clip_index, warping, aci=None):
+        try:
+            clip = self._session_clip(track_index, clip_index, midi=False, arrangement_clip_index=aci)
+            clip.warping = bool(warping)
+            return {"warping": clip.warping}
+        except Exception as e:
+            self.log_message("Error setting clip warping: " + str(e))
+            raise
+
+    def _set_clip_warp_mode(self, track_index, clip_index, warp_mode, aci=None):
+        """0=Beats, 1=Tones, 2=Texture, 3=Re-Pitch, 4=Complex, 6=Complex Pro (warping must be on)."""
+        try:
+            clip = self._session_clip(track_index, clip_index, midi=False, arrangement_clip_index=aci)
+            clip.warp_mode = int(warp_mode)
+            return {"warp_mode": clip.warp_mode}
+        except Exception as e:
+            self.log_message("Error setting clip warp mode: " + str(e))
+            raise
+
     def _get_device_type(self, device):
         """Get the type of a device"""
         try:
