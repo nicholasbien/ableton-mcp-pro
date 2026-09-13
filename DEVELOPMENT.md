@@ -21,6 +21,100 @@ Claude → MCP Server (FastMCP) → TCP socket (port 9877) → Remote Script (in
 Commands are JSON objects: `{"command": "command_name", "params": {...}}`
 Responses are JSON objects: `{"status": "success", "result": {...}}`
 
+## Max for Live Device (Alternative to Remote Script)
+
+The Max for Live device (`MaxForLive/AbletonMCP.amxd`) is a drag-and-drop alternative to the Remote Script. Same TCP protocol, same MCP server — just a different backend inside Ableton. The device listens on port **9878** (the Remote Script uses 9877) so both can run at once. Point the MCP server at the device with `ABLETON_PORT=9878` (and `ABLETON_HOST` if not localhost). The port is an argument on the `node.script` box in the patcher; change `PORT` in `build_amxd.py` and rebuild.
+
+### Architecture
+
+```
+MCP Server (unchanged) → TCP:9878 → node.script (Node.js TCP + JSON) → Max messages → js (ES5 LiveAPI) → response back
+```
+
+Two JS runtimes inside the device:
+- **`node.script`** runs `tcp-server.js` (Node.js) — TCP server, JSON parsing, request routing
+- **`js`** runs `lom-handler.js` (Max JS, ES5 only) — all LiveAPI/LOM commands
+
+They communicate via Max messages passing JSON strings (not dicts — see quirks below).
+
+### Installation
+
+1. Build the device: `python3 MaxForLive/build_amxd.py`
+2. Copy files to User Library:
+   ```bash
+   mkdir -p ~/Music/Ableton/User\ Library/Presets/Audio\ Effects/Max\ Audio\ Effect/AbletonMCP/
+   cp MaxForLive/AbletonMCP.amxd ~/Music/Ableton/User\ Library/Presets/Audio\ Effects/Max\ Audio\ Effect/AbletonMCP/
+   cp MaxForLive/code/tcp-server.js ~/Music/Ableton/User\ Library/Presets/Audio\ Effects/Max\ Audio\ Effect/AbletonMCP/
+   cp MaxForLive/code/lom-handler.js ~/Music/Ableton/User\ Library/Presets/Audio\ Effects/Max\ Audio\ Effect/AbletonMCP/
+   ```
+3. In Ableton, drag `AbletonMCP` from the browser onto any track
+4. Check the Max console for "AbletonMCP: Listening on port 9878"
+
+**JS files must be flat next to the .amxd** — subfolder paths don't resolve reliably for unfrozen devices.
+
+### Updating Code
+
+`lom-handler.js` sets `autowatch = 1`, so the `js` object reloads it whenever the copy in the User Library changes on disk — no restart needed for LOM handler changes. Note the queue and any in-flight `record_arrangement` are reset on reload.
+
+`node.script` caches `tcp-server.js` aggressively. After changing it:
+1. Copy updated files to the User Library path above
+2. **Fully quit and reopen Ableton** — deleting and re-dragging the device is NOT enough
+3. Verify "Listening on port 9878" appears in Max console
+
+### .amxd Binary Format
+
+The `.amxd` file is NOT plain JSON. It requires a 32-byte binary header:
+
+| Offset | Value | Meaning |
+|--------|-------|---------|
+| 0-3 | `ampf` | Magic bytes |
+| 4-7 | `04 00 00 00` | Size of device type field (LE uint32) |
+| 8-11 | `aaaa` | Device type (Audio Effect) |
+| 12-15 | `meta` | Meta marker |
+| 16-19 | `04 00 00 00` | Meta size |
+| 20-23 | `00 00 00 00` | Meta content (unfrozen) |
+| 24-27 | `ptch` | Patch marker |
+| 28-31 | (varies) | JSON length + null terminator (LE uint32) |
+
+Without this header, Ableton shows the file in the browser but won't let you drag it onto a track. `build_amxd.py` generates the correct format.
+
+### LiveAPI Quirks (vs Python Remote Script)
+
+| Issue | Detail |
+|-------|--------|
+| **Browser NOT accessible** | `Application.browser` is not available from M4L's JS LiveAPI. `app.get("browser")` fails. Browser commands only work via the Python Remote Script. Users must drag instruments manually. |
+| **set_notes decimal bug** | Integer time/duration values cause "Invalid syntax". Always use `.toFixed(8)` |
+| **ES5 only** | `js` object uses ES5 — no `let`/`const`, arrow functions, template literals, `for...of`, destructuring, or Promises |
+| **get() returns** | Booleans are 0/1, scalars may be array-like |
+| **unquotedpath** | Always use `.unquotedpath` for path concatenation (`.path` wraps in quotes) |
+| **No global LiveAPI** | Cannot create LiveAPI objects in global scope — must wait for device init |
+| **Observers** | Expensive, can't be unregistered, cause sluggishness if overused |
+
+### IPC Between node.script and js
+
+**Do NOT use dicts** — `maxAPI.setDict()` is async and race-prone.
+**Do NOT use `route`** — it strips the selector, sending bare `bang` instead of the response.
+
+The working pattern passes JSON strings directly as Max messages:
+- node.script → js: `maxAPI.outlet("command", requestId, jsonString)`
+- js receives via `function command()` with `arrayfromargs(messagename, arguments)`
+- js → node.script: `outlet(0, "response", requestId, jsonString)`
+- node.script receives via `maxAPI.addHandler("response", function(requestId, jsonStr) {...})`
+
+### Advantages Over Remote Script
+
+- No app bundle modification — drag-and-drop vs copying files into `Ableton.app`
+- No Ableton restart to install (though code changes still need restart due to caching)
+- Per-project — device lives in the Live Set, not global config
+- Node.js runtime — access to full Node ecosystem via `node.script`
+- Max ecosystem — can wire in audio analysis, OSC, MIDI processing objects
+
+### Known Limitations (M4L only)
+
+- **Browser not accessible** — `get_browser_tree`, `get_browser_items_at_path`, `load_instrument_or_effect` don't work. The `Application.browser` property isn't exposed to M4L's JS LiveAPI. Users must drag instruments/effects manually. Could potentially be solved with `live.path`/`live.object` patcher objects.
+- **Audio clips not editable** — `get_clip_notes` and `add_notes_to_clip` only work on MIDI clips. Audio clips return "Not a MIDI clip". No API exists to read/edit audio clip warp markers or transients. Workaround: create a MIDI replacement clip on a new track.
+- `record_arrangement` — needs Task-based timer approach in Max JS (deferred)
+
 ## Remote Script Installation & Deployment
 
 ### Location

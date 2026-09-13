@@ -103,6 +103,18 @@ C:\ProgramData\Ableton\Live 12 Suite\Resources\MIDI Remote Scripts\AbletonMCP\__
 
 You should see "AbletonMCP: Listening for commands on port 9877" in the status bar.
 
+#### Alternative: Max for Live device
+
+If you have Live Suite (or the Max for Live add-on), you can skip the Remote Script install and use the drag-and-drop device instead:
+
+```bash
+python3 MaxForLive/build_amxd.py
+D=~/Music/Ableton/User\ Library/Presets/Audio\ Effects/Max\ Audio\ Effect/AbletonMCP
+mkdir -p "$D" && cp MaxForLive/AbletonMCP.amxd MaxForLive/code/*.js "$D/"
+```
+
+Drag **AbletonMCP** from the browser (User Library > Presets > Audio Effects > Max Audio Effect) onto any track. It listens on port **9878**, so set `ABLETON_PORT=9878` in the MCP server's environment. The device supports everything except the browser tools (`get_browser_tree`, `get_browser_items_at_path`, `load_instrument_or_effect`), which Max for Live's Live API does not expose. Both backends can run at the same time. See [DEVELOPMENT.md](DEVELOPMENT.md#max-for-live-device-alternative-to-remote-script).
+
 ### 4. Connect your AI assistant
 
 #### Claude Code (CLI)
