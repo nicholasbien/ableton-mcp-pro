@@ -1585,10 +1585,12 @@ def redo(ctx: Context) -> str:
         return f"Error redoing: {str(e)}"
 
 # ---- clip editing, device bypass, return tracks, drum pads ----
+# Clip tools take a session slot (clip_index) or, with arrangement_clip_index set, an arrangement clip
+# (index as listed by get_arrangement_clips). Audio clips can only be created in the arrangement.
 
 @mcp.tool()
 def remove_notes(ctx: Context, track_index: int, clip_index: int, from_pitch: int = 0, pitch_span: int = 128,
-                 from_time: float = 0.0, time_span: float = -1.0) -> str:
+                 from_time: float = 0.0, time_span: float = -1.0, arrangement_clip_index: int = None) -> str:
     """Remove the notes of a session MIDI clip inside a pitch/time window, leaving the rest intact.
 
     Parameters:
@@ -1598,7 +1600,7 @@ def remove_notes(ctx: Context, track_index: int, clip_index: int, from_pitch: in
     """
     try:
         result = get_ableton_connection().send_command("remove_notes", {
-            "track_index": track_index, "clip_index": clip_index, "from_pitch": from_pitch,
+            "track_index": track_index, "clip_index": clip_index, "arrangement_clip_index": arrangement_clip_index, "from_pitch": from_pitch,
             "pitch_span": pitch_span, "from_time": from_time, "time_span": time_span})
         return f"Removed {result.get('removed')} notes, {result.get('remaining')} remain"
     except Exception as e:
@@ -1606,26 +1608,26 @@ def remove_notes(ctx: Context, track_index: int, clip_index: int, from_pitch: in
         return f"Error removing notes: {str(e)}"
 
 @mcp.tool()
-def quantize_clip(ctx: Context, track_index: int, clip_index: int, grid: int = 4, strength: float = 1.0) -> str:
+def quantize_clip(ctx: Context, track_index: int, clip_index: int, grid: int = 5, strength: float = 1.0, arrangement_clip_index: int = None) -> str:
     """Quantize a session clip's notes to a grid.
 
     Parameters:
-    - grid: Live's quantization enum: 1=1/8, 2=1/8+1/8T, 3=1/8T, 4=1/16 (default), 5=1/16+1/16T, 6=1/16T, 7=1/32, 8=1/4
+    - grid: Live's quantization enum: 1=1/4, 2=1/8, 3=1/8+1/8T, 4=1/8T, 5=1/16 (default), 6=1/16+1/16T, 7=1/16T, 8=1/32
     - strength: 0.0-1.0 (1.0 = snap fully)
     """
     try:
         get_ableton_connection().send_command("quantize_clip", {
-            "track_index": track_index, "clip_index": clip_index, "grid": grid, "strength": strength})
+            "track_index": track_index, "clip_index": clip_index, "arrangement_clip_index": arrangement_clip_index, "grid": grid, "strength": strength})
         return f"Quantized clip at track {track_index}, slot {clip_index} (grid {grid}, strength {strength})"
     except Exception as e:
         logger.error(f"Error quantizing clip: {str(e)}")
         return f"Error quantizing clip: {str(e)}"
 
 @mcp.tool()
-def duplicate_clip_loop(ctx: Context, track_index: int, clip_index: int) -> str:
+def duplicate_clip_loop(ctx: Context, track_index: int, clip_index: int, arrangement_clip_index: int = None) -> str:
     """Double a session clip's loop length and copy its contents into the new half."""
     try:
-        result = get_ableton_connection().send_command("duplicate_clip_loop", {"track_index": track_index, "clip_index": clip_index})
+        result = get_ableton_connection().send_command("duplicate_clip_loop", {"track_index": track_index, "clip_index": clip_index, "arrangement_clip_index": arrangement_clip_index})
         return f"Loop doubled: length {result.get('length')} beats, loop {result.get('loop_start')}-{result.get('loop_end')}"
     except Exception as e:
         logger.error(f"Error duplicating clip loop: {str(e)}")
@@ -1633,7 +1635,7 @@ def duplicate_clip_loop(ctx: Context, track_index: int, clip_index: int) -> str:
 
 @mcp.tool()
 def duplicate_region(ctx: Context, track_index: int, clip_index: int, region_start: float, region_length: float,
-                     destination_time: float, pitch: int = -1, transposition_amount: int = 0) -> str:
+                     destination_time: float, pitch: int = -1, transposition_amount: int = 0, arrangement_clip_index: int = None) -> str:
     """Copy a region of a session MIDI clip to another position, optionally one pitch only and/or transposed.
 
     Parameters:
@@ -1644,7 +1646,7 @@ def duplicate_region(ctx: Context, track_index: int, clip_index: int, region_sta
     """
     try:
         result = get_ableton_connection().send_command("duplicate_region", {
-            "track_index": track_index, "clip_index": clip_index, "region_start": region_start,
+            "track_index": track_index, "clip_index": clip_index, "arrangement_clip_index": arrangement_clip_index, "region_start": region_start,
             "region_length": region_length, "destination_time": destination_time, "pitch": pitch,
             "transposition_amount": transposition_amount})
         return f"Duplicated region; clip length now {result.get('length')} beats"
@@ -1704,20 +1706,20 @@ def get_drum_pads(ctx: Context, track_index: int, device_index: int = 0) -> str:
         return f"Error getting drum pads: {str(e)}"
 
 @mcp.tool()
-def set_clip_gain(ctx: Context, track_index: int, clip_index: int, gain: float) -> str:
+def set_clip_gain(ctx: Context, track_index: int, clip_index: int, gain: float, arrangement_clip_index: int = None) -> str:
     """Set a session audio clip's gain, normalized 0.0-1.0 (0.4 is about 0 dB)."""
     try:
-        result = get_ableton_connection().send_command("set_clip_gain", {"track_index": track_index, "clip_index": clip_index, "gain": gain})
+        result = get_ableton_connection().send_command("set_clip_gain", {"track_index": track_index, "clip_index": clip_index, "arrangement_clip_index": arrangement_clip_index, "gain": gain})
         return f"Clip gain {result.get('gain')} ({result.get('gain_display', '')})"
     except Exception as e:
         logger.error(f"Error setting clip gain: {str(e)}")
         return f"Error setting clip gain: {str(e)}"
 
 @mcp.tool()
-def set_clip_pitch(ctx: Context, track_index: int, clip_index: int, coarse: int = None, fine: int = None) -> str:
+def set_clip_pitch(ctx: Context, track_index: int, clip_index: int, coarse: int = None, fine: int = None, arrangement_clip_index: int = None) -> str:
     """Transpose a session audio clip: coarse in semitones (-48..48), fine in cents (-500..500)."""
     try:
-        params = {"track_index": track_index, "clip_index": clip_index}
+        params = {"track_index": track_index, "clip_index": clip_index, "arrangement_clip_index": arrangement_clip_index}
         if coarse is not None: params["coarse"] = coarse
         if fine is not None: params["fine"] = fine
         result = get_ableton_connection().send_command("set_clip_pitch", params)
@@ -1727,20 +1729,20 @@ def set_clip_pitch(ctx: Context, track_index: int, clip_index: int, coarse: int 
         return f"Error setting clip pitch: {str(e)}"
 
 @mcp.tool()
-def set_clip_warping(ctx: Context, track_index: int, clip_index: int, warping: bool) -> str:
+def set_clip_warping(ctx: Context, track_index: int, clip_index: int, warping: bool, arrangement_clip_index: int = None) -> str:
     """Turn warping on or off for a session audio clip."""
     try:
-        result = get_ableton_connection().send_command("set_clip_warping", {"track_index": track_index, "clip_index": clip_index, "warping": warping})
+        result = get_ableton_connection().send_command("set_clip_warping", {"track_index": track_index, "clip_index": clip_index, "arrangement_clip_index": arrangement_clip_index, "warping": warping})
         return f"Warping {'on' if result.get('warping') else 'off'}"
     except Exception as e:
         logger.error(f"Error setting clip warping: {str(e)}")
         return f"Error setting clip warping: {str(e)}"
 
 @mcp.tool()
-def set_clip_warp_mode(ctx: Context, track_index: int, clip_index: int, warp_mode: int) -> str:
+def set_clip_warp_mode(ctx: Context, track_index: int, clip_index: int, warp_mode: int, arrangement_clip_index: int = None) -> str:
     """Set a session audio clip's warp mode: 0=Beats, 1=Tones, 2=Texture, 3=Re-Pitch, 4=Complex, 6=Complex Pro."""
     try:
-        result = get_ableton_connection().send_command("set_clip_warp_mode", {"track_index": track_index, "clip_index": clip_index, "warp_mode": warp_mode})
+        result = get_ableton_connection().send_command("set_clip_warp_mode", {"track_index": track_index, "clip_index": clip_index, "arrangement_clip_index": arrangement_clip_index, "warp_mode": warp_mode})
         modes = {0: "Beats", 1: "Tones", 2: "Texture", 3: "Re-Pitch", 4: "Complex", 6: "Complex Pro"}
         return f"Warp mode {modes.get(result.get('warp_mode'), result.get('warp_mode'))}"
     except Exception as e:
