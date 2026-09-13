@@ -1924,7 +1924,9 @@ class AbletonMCP(ControlSurface):
         """Create an audio clip from a file path in the arrangement view at a given position.
 
         Uses Live 11+ Track.create_audio_clip(file_path, position) API.
-        length is optional - if provided, the clip is trimmed/looped to that length.
+        length is optional: the clip loops its first `length` beats (Live 12 refuses end_time on
+        a fresh arrangement audio clip, so the loop end is trimmed instead); a following clip
+        truncates the region.
         start_offset (beats) skips the head of the sample (a whoosh before the hit): the
         clip's start marker is advanced by that much.
         """
@@ -1943,11 +1945,17 @@ class AbletonMCP(ControlSurface):
             # Live 11+ API: create_audio_clip(file_path, position) returns the new Clip
             clip = track.create_audio_clip(file_path, float(time))
 
+            length_note = ""
             if length is not None and clip is not None:
                 try:
                     clip.end_time = float(time) + float(length)
-                except Exception:
-                    pass  # length adjustment is best-effort
+                except Exception as le:
+                    try:                                    # end_time may be read-only: trim the loop instead
+                        clip.looping = True
+                        clip.loop_end = clip.start_marker + float(length)
+                    except Exception as le2:
+                        length_note = "length not applied: %s / %s" % (le, le2)
+                        self.log_message(length_note)
             if start_offset is not None and clip is not None:
                 try:
                     clip.start_marker = clip.start_marker + float(start_offset)
@@ -1961,6 +1969,7 @@ class AbletonMCP(ControlSurface):
                 "length": clip.length if clip else 0,
                 "start_marker": clip.start_marker if clip else None,
                 "name": clip.name if clip else "",
+                "note": length_note,
             }
             return result
         except Exception as e:
@@ -2549,7 +2558,7 @@ class AbletonMCP(ControlSurface):
                 if end_beat <= start_time:
                     raise Exception("nothing in the arrangement to record (pass `seconds` to record anyway)")
                 seconds = (end_beat - start_time + 4.0) * 60.0 / tempo
-            def setup():
+            def make_track():
                 if self._song.is_playing:
                     self._song.stop_playing()
                 self._song.create_audio_track(-1)
@@ -2561,6 +2570,9 @@ class AbletonMCP(ControlSurface):
                         break
                 else:
                     raise Exception("no Resampling input on the new track")
+                holder["track"] = track; holder["index"] = list(self._song.tracks).index(track)
+            def route_and_arm():
+                track = holder["track"]
                 chans = list(track.available_input_routing_channels)
                 if chans:
                     track.input_routing_channel = chans[0]
@@ -2569,31 +2581,51 @@ class AbletonMCP(ControlSurface):
                     if tr.can_be_armed and tr.arm:          # record mode records over its clip instead of playing
                         tr.arm = False
                 track.arm = True
-                holder["track"] = track; holder["index"] = list(self._song.tracks).index(track)
+            def locate():
                 self._song.back_to_arranger = False        # the arrangement plays (True = session overrides it)
                 self._song.current_song_time = float(start_time)
+            def record_on():
                 self._song.record_mode = 1
+            def go():
+                self._song.stop_all_clips()
+                self._song.back_to_arranger = False
+                self._song.current_song_time = float(start_time)
                 self._song.start_playing()
-            do_on_main(setup)
+            # the same steps as separate socket calls work; one combined task did not start the transport
+            for step in (make_track, route_and_arm, locate, record_on, go):
+                do_on_main(step)
+                time_module.sleep(0.15)
+            state = {"playing": True, "pos": 0.0}
+            def read_state():
+                state["playing"] = bool(self._song.is_playing); state["pos"] = float(self._song.current_song_time)
             t0 = time_module.monotonic(); stopped_early = False
+            time_module.sleep(1.0)                          # let the transport start before watching it
             while time_module.monotonic() - t0 < seconds:
-                time_module.sleep(0.25)
-                if not self._song.is_playing:
+                time_module.sleep(0.5)
+                do_on_main(read_state)                      # LOM reads are only reliable on the main thread
+                if not state["playing"]:
                     stopped_early = True
                     break
+            out = {}
             def finish():
                 self._song.stop_playing()
                 self._song.record_mode = 0
                 holder["track"].arm = False
                 self._song.current_song_time = float(start_time)
+            def read_clip():
+                clips = list(holder["track"].arrangement_clips)
+                rec = clips[-1] if clips else None
+                out["file_path"] = rec.file_path if rec else None
+                out["length_beats"] = rec.length if rec else 0.0
             do_on_main(finish)
-            time_module.sleep(0.5)
-            clips = list(holder["track"].arrangement_clips)
-            rec = clips[-1] if clips else None
+            for _ in range(12):                              # the recorded clip appears a moment after stop
+                time_module.sleep(0.5)
+                do_on_main(read_clip)
+                if out.get("file_path"):
+                    break
             return {"track_index": holder["index"], "track_name": name,
-                    "file_path": rec.file_path if rec else None,
-                    "length_beats": rec.length if rec else 0.0, "seconds": round(seconds, 1),
-                    "stopped_early": stopped_early,
+                    "file_path": out.get("file_path"), "length_beats": out.get("length_beats", 0.0),
+                    "seconds": round(seconds, 1), "stopped_at_beat": state["pos"], "stopped_early": stopped_early,
                     "note": "the transport stopped before the end (audio device change or a manual stop?)" if stopped_early else ""}
         except Exception as e:
             self.log_message("Error resampling master: " + str(e))
