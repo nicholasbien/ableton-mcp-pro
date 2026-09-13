@@ -184,10 +184,10 @@ AI Assistant --> MCP Server (Python) --> TCP socket (port 9877) --> Remote Scrip
 ## Available Tools
 
 ### Read
-`get_session_info`, `get_track_info`, `get_device_parameters`, `get_arrangement_info`, `get_arrangement_clips`, `get_full_arrangement`, `get_clip_notes`, `get_arrangement_clip_notes`, `get_clip_envelope`, `get_browser_tree`, `get_browser_items_at_path`, `get_drum_pads`
+`get_session_info`, `get_track_info`, `get_device_parameters`, `get_arrangement_info`, `get_arrangement_clips`, `get_full_arrangement`, `get_clip_notes`, `get_arrangement_clip_notes`, `get_clip_envelope`, `get_browser_tree`, `get_browser_items_at_path`, `get_drum_pads`, `get_clip_info`
 
 ### Modify
-`create_midi_track`, `create_audio_track`, `create_clip`, `create_audio_clip`, `add_notes_to_clip`, `set_clip_name`, `set_clip_loop`, `delete_clip`, `delete_arrangement_clip`, `duplicate_clip`, `delete_track`, `duplicate_track`, `set_track_name`, `set_track_volume`, `set_track_panning`, `set_track_mute`, `set_track_solo`, `set_track_arm`, `set_send_level`, `set_tempo`, `set_time_signature`, `set_metronome`, `fire_clip`, `stop_clip`, `fire_scene`, `create_scene`, `delete_scene`, `set_scene_name`, `start_playback`, `stop_playback`, `play_arrangement`, `load_instrument_or_effect`, `set_device_parameter`, `batch_set_device_parameters`, `delete_device`, `set_song_time`, `set_record_mode`, `set_arrangement_overdub`, `set_back_to_arranger`, `set_arrangement_loop`, `set_clip_envelope`, `clear_clip_envelope`, `undo`, `redo`, `remove_notes`, `quantize_clip`, `duplicate_clip_loop`, `duplicate_region`, `set_device_enabled`, `create_return_track`, `delete_return_track`, `stop_all_clips`, `set_clip_gain`, `set_clip_pitch`, `set_clip_warping`, `set_clip_warp_mode`
+`create_midi_track`, `create_audio_track`, `create_clip`, `create_arrangement_audio_clips_batch`, `resample_master`, `add_notes_to_clip`, `set_clip_name`, `set_clip_loop`, `delete_clip`, `delete_arrangement_clip`, `duplicate_clip`, `delete_track`, `duplicate_track`, `set_track_name`, `set_track_volume`, `set_track_panning`, `set_track_mute`, `set_track_solo`, `set_track_arm`, `set_send_level`, `set_tempo`, `set_time_signature`, `set_metronome`, `fire_clip`, `stop_clip`, `fire_scene`, `create_scene`, `delete_scene`, `set_scene_name`, `start_playback`, `stop_playback`, `play_arrangement`, `load_instrument_or_effect`, `set_device_parameter`, `batch_set_device_parameters`, `delete_device`, `set_song_time`, `set_record_mode`, `set_arrangement_overdub`, `set_back_to_arranger`, `set_arrangement_loop`, `set_clip_envelope`, `clear_clip_envelope`, `undo`, `redo`, `remove_notes`, `quantize_clip`, `duplicate_clip_loop`, `duplicate_region`, `set_device_enabled`, `create_return_track`, `delete_return_track`, `stop_all_clips`, `set_clip_gain`, `set_clip_pitch`, `set_clip_warping`, `set_clip_warp_mode`
 
 ### Arrangement
 The arrangement view supports a **full read-modify-write loop directly**, no session-view round-trip required:
@@ -231,7 +231,8 @@ to generate melody continuations. The agent reads a clip with
 ## Known Limitations
 
 - **Arrangement clips are read-only** — The LOM can't create/delete arrangement clips directly. Use `record_arrangement` to record from session, or record an empty scene to erase.
-- **Audio clip loading** — `ClipSlot.create_clip()` only accepts a length (for MIDI clips), not file paths. Audio clips must be dragged manually from Ableton's browser.
+- **Session-view audio clips** — `ClipSlot.create_clip()` only accepts a length (for MIDI clips), not file paths, so samples can only be placed in the arrangement (`create_arrangement_audio_clip`).
+- **No audio export** — Live has no export command; `resample_master` records the main mix through a Resampling track instead.
 - **Stale song reference** — First command after an Ableton restart may fail (retry works). The script auto-refreshes its internal reference.
 
 ## Development

@@ -7,7 +7,7 @@ processes. The agent (or you) drives them via shell, no MCP server changes.
 
 CLI that turns Ableton clip notes into an AI-generated continuation. Wraps
 the [`midigenai`](https://github.com/nicholasbien/midigenai) package
-(a 113M custom transformer, event-based tokenization; `v2-100m` by default). The model
+(a 113M custom transformer, event-based tokenization; `v3` by default). The model
 is auto-downloaded from
 [huggingface.co/nicholasbien/midigenai](https://huggingface.co/nicholasbien/midigenai)
 on first use and cached at `~/.cache/huggingface/`.
