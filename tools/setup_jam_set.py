@@ -62,9 +62,12 @@ kb = args.keyboard
 if kb is None:
     avail = [t["display_name"] for t in live("get_track_routing", {"track_index": you})["available_input_routing_types"]]
     hw = [n for n in avail if "IAC" not in n and n not in ("All Ins", "Computer Keyboard", "No Input") and track_by_name(n) is None]
-    kb = hw[0] if hw else "All Ins"
+    # never "All Ins": it includes the IAC bus fluidclaude plays on, so the loops would come back
+    # in as "calls" (feedback). No hardware keyboard -> Live's computer keyboard (press M in Live).
+    kb = hw[0] if hw else "Computer Keyboard"
 notes.append(f"you: MIDI From {route_in(you, kb)}, MIDI To {route_out(you, args.in_bus)}")
 live("set_track_monitoring", {"track_index": you, "state": 0})
+live("set_track_arm", {"track_index": you, "arm": True})          # the computer keyboard only reaches an armed track
 snd = make("you (sound)", args.you_instrument)
 notes.append(f"you (sound): MIDI From {route_in(snd, 'you')}, Monitor In")
 live("set_track_monitoring", {"track_index": snd, "state": 0})
