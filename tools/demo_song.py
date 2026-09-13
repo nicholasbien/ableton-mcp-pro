@@ -217,6 +217,10 @@ for tr in range(int(live("get_session_info")["track_count"])):
 
 # ---------------------------------------------------------------- record the master with a Resampling track
 REC = live("create_audio_track", {"index": -1})["index"]; live("set_track_name", {"track_index": REC, "name": "master rec"})
+# Live auto-arms new tracks; an armed MIDI track in record mode records over its clip instead
+# of playing it (and exclusive arm may be off), so only the recorder may be armed
+for i in range(int(live("get_session_info")["track_count"])):
+    if i != REC and live("get_track_info", {"track_index": i})["arm"]: live("set_track_arm", {"track_index": i, "arm": False})
 live("set_track_input_routing", {"track_index": REC, "routing_type_name": "Resampling"})
 live("set_track_monitoring", {"track_index": REC, "state": 2}); live("set_track_arm", {"track_index": REC, "arm": True})
 live("stop_playback"); live("set_back_to_arranger", {"value": False}); live("set_song_time", {"time": 0.0})
