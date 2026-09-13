@@ -1814,17 +1814,20 @@ def get_track_routing(ctx: Context, track_index: int) -> str:
         return f"Error getting routing: {str(e)}"
 
 @mcp.tool()
-def set_track_input_routing(ctx: Context, track_index: int, routing_type_name: str) -> str:
+def set_track_input_routing(ctx: Context, track_index: int, routing_type_name: str, channel_name: str = None) -> str:
     """Set the input routing of a track by name.
 
     Parameters:
     - track_index: The index of the track
     - routing_type_name: Name of the routing type (use get_track_routing to see available options)
+    - channel_name: Optional channel within it ("Ch. 5", "1/2", "Post FX"); default: the first
     """
     try:
         ableton = get_ableton_connection()
-        result = ableton.send_command("set_track_input_routing", {"track_index": track_index, "routing_type_name": routing_type_name})
-        return f"Set input routing to '{routing_type_name}'"
+        params = {"track_index": track_index, "routing_type_name": routing_type_name}
+        if channel_name: params["channel_name"] = channel_name
+        result = ableton.send_command("set_track_input_routing", params)
+        return f"Set input routing to '{routing_type_name}' / {result.get('input_routing_channel')}"
     except Exception as e:
         logger.error(f"Error setting input routing: {str(e)}")
         return f"Error setting input routing: {str(e)}"
@@ -1836,6 +1839,7 @@ def set_track_output_routing(ctx: Context, track_index: int, routing_type_name: 
     Parameters:
     - track_index: The index of the track
     - routing_type_name: Name of the routing type (use get_track_routing to see available options)
+    - channel_name: Optional channel within it ("Ch. 5", "1/2", "Post FX"); default: the first
     """
     try:
         ableton = get_ableton_connection()
