@@ -141,3 +141,11 @@ MAESTRO + POP909 + GiantMIDI). Best results come from:
 First call ≈ 2–4s on CPU (download + model load + ~250 tokens). Subsequent
 calls in the same Python process reuse the loaded generator, so they run at
 ~70 notes/s. The bridge keeps the generator alive in a module-level cache.
+
+## live_client.py — talk to the Remote Script from a script
+
+`live(cmd, params)` sends one command over the port-9877 socket and returns its result, plus
+`tracks()`, `track_by_name(name)`, `clear_arrangement_clips(track)` and `set_param(track, device,
+name, value)`. The same protocol the MCP server speaks, for scripts and tests that don't want an
+MCP round trip (the resample and clip-tool tests were written against it). Every call costs
+0.4–1.5 s; keep it out of anything time-critical.
