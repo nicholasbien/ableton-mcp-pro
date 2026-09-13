@@ -185,8 +185,12 @@ for tr, v in ((DR, 0.85), (BA, 0.8), (AC, 0.6), (ST, 0.55), (PD, 0.45), (LD, 0.6
 sections = [(0, 16), (1, 8), (2, 16), (3, 8), (4, 16), (5, 8), (4, 16), (6, 16)]
 print("recording %d bars of scenes into the arrangement (~%d s)..." % (sum(b for _, b in sections), sum(b for _, b in sections) * 4 * 60 / BPM), flush=True)
 say("scenes -> arrangement", "record_arrangement", {"sections": [{"scene_index": s, "bars": b} for s, b in sections], "start_time": 0.0}, timeout=400)
+live("stop_playback")
 say("all clips stop", "stop_all_clips", {"quantized": False})
-live("set_back_to_arranger")
+say("arrangement plays again", "set_back_to_arranger", {"value": False})       # True would leave session silence overriding it
+counts = {live("get_track_info", {"track_index": i})["name"]: live("get_arrangement_clips", {"track_index": i})["arrangement_clip_count"] for i in range(int(live("get_session_info")["track_count"]))}
+print("   arrangement clips per track:", counts, flush=True)
+assert all(v > 0 for k, v in counts.items() if k not in ("lead", "texture")), "scene recording produced no clips"
 
 # ---------------------------------------------------------------- arrangement-only material
 bar = lambda b: (b - 1) * 4.0
@@ -215,10 +219,11 @@ for tr in range(int(live("get_session_info")["track_count"])):
 REC = live("create_audio_track", {"index": -1})["index"]; live("set_track_name", {"track_index": REC, "name": "master rec"})
 live("set_track_input_routing", {"track_index": REC, "routing_type_name": "Resampling"})
 live("set_track_monitoring", {"track_index": REC, "state": 2}); live("set_track_arm", {"track_index": REC, "arm": True})
-live("set_song_time", {"time": 0.0}); live("set_record_mode", {"on": True}); live("play_arrangement", {"time": 0.0})
+live("stop_playback"); live("set_back_to_arranger", {"value": False}); live("set_song_time", {"time": 0.0})
+live("set_record_mode", {"on": True}); live("play_arrangement", {"time": 0.0})    # only the armed Resampling track records
 time.sleep(2.0)
-pos = live("get_arrangement_info")["current_song_time"]
-if pos > 8.0: live("set_song_time", {"time": 0.0})                                # play started from the insert marker: relocate
+a = live("get_arrangement_info"); print("   recording: playing=%s record=%s pos=%.1f override=%s" % (a["is_playing"], a["record_mode"], a["current_song_time"], a["back_to_arranger"]), flush=True)
+if a["current_song_time"] > 8.0: live("set_song_time", {"time": 0.0})           # play started from the insert marker: relocate
 secs = (end_beat + 8) * 60.0 / BPM
 print("resampling the master: %.0f s..." % secs, flush=True); time.sleep(secs)
 live("stop_playback"); live("set_record_mode", {"on": False}); live("set_track_arm", {"track_index": REC, "arm": False})

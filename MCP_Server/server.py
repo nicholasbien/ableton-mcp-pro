@@ -1047,11 +1047,16 @@ def set_arrangement_overdub(ctx: Context, on: bool) -> str:
         return f"Error setting arrangement overdub: {str(e)}"
 
 @mcp.tool()
-def set_back_to_arranger(ctx: Context) -> str:
-    """Return playback to the arrangement view from session view."""
+def set_back_to_arranger(ctx: Context, value: bool = False) -> str:
+    """Return playback to the arrangement (what the Back to Arrangement button does).
+
+    Live's flag is True while session clips override the arrangement; this sets it to `value`
+    (default False = arrangement plays; True = session takes over). Note: with record mode on,
+    an overridden arrangement gets recorded over with whatever the session plays, including silence.
+    """
     try:
         ableton = get_ableton_connection()
-        result = ableton.send_command("set_back_to_arranger")
+        result = ableton.send_command("set_back_to_arranger", {"value": value})
         return "Returned to arrangement"
     except Exception as e:
         logger.error(f"Error setting back to arranger: {str(e)}")

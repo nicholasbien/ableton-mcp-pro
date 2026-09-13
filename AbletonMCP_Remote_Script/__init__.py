@@ -415,7 +415,7 @@ class AbletonMCP(ControlSurface):
                             on = params.get("on", False)
                             result = self._set_arrangement_overdub(on)
                         elif command_type == "set_back_to_arranger":
-                            result = self._set_back_to_arranger()
+                            result = self._set_back_to_arranger(params.get("value", False))
                         elif command_type == "set_arrangement_loop":
                             on = params.get("on", True)
                             start = params.get("start", 0.0)
@@ -658,6 +658,7 @@ class AbletonMCP(ControlSurface):
                 "arm": track.arm,
                 "volume": track.mixer_device.volume.value,
                 "panning": track.mixer_device.panning.value,
+                "output_meter_level": getattr(track, "output_meter_level", None),   # 0-1, live signal at the track output
                 "clip_slots": clip_slots,
                 "devices": devices
             }
@@ -684,6 +685,12 @@ class AbletonMCP(ControlSurface):
                 "input_routing_type": str(track.input_routing_type.display_name) if hasattr(track.input_routing_type, 'display_name') else str(track.input_routing_type),
                 "output_routing_type": str(track.output_routing_type.display_name) if hasattr(track.output_routing_type, 'display_name') else str(track.output_routing_type),
             }
+            try:
+                ch = getattr(track, "input_routing_channel", None)
+                result["input_routing_channel"] = str(ch.display_name) if ch is not None else None
+                result["available_input_routing_channels"] = [str(c.display_name) for c in track.available_input_routing_channels]
+            except Exception:
+                pass
             if hasattr(track, 'available_input_routing_types'):
                 result["available_input_routing_types"] = [
                     {"display_name": str(r.display_name) if hasattr(r, 'display_name') else str(r)}
@@ -707,7 +714,17 @@ class AbletonMCP(ControlSurface):
                 name = str(routing_type.display_name) if hasattr(routing_type, 'display_name') else str(routing_type)
                 if name == routing_type_name:
                     track.input_routing_type = routing_type
-                    return {"input_routing_type": routing_type_name}
+                    # the channel is a separate property and can stay pointed at the previous
+                    # type's channel (recording then captures silence); pick the new type's first
+                    channel_name = None
+                    try:
+                        channels = list(track.available_input_routing_channels)
+                        if channels:
+                            track.input_routing_channel = channels[0]
+                            channel_name = str(channels[0].display_name)
+                    except Exception as ce:
+                        self.log_message("input channel not set: " + str(ce))
+                    return {"input_routing_type": routing_type_name, "input_routing_channel": channel_name}
             raise Exception("Routing type not found: " + routing_type_name)
         except Exception as e:
             self.log_message("Error setting track input routing: " + str(e))
@@ -856,12 +873,14 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error setting arrangement overdub: " + str(e))
             raise
 
-    def _set_back_to_arranger(self):
-        """Return to arrangement view from session"""
+    def _set_back_to_arranger(self, value=False):
+        """Song.back_to_arranger is True while session clips override the arrangement (the
+        'Back to Arrangement' button is lit). Setting it False is what clicking that button
+        does: the arrangement plays again. Default False; pass True to hand control to session."""
         try:
-            self._song.back_to_arranger = True
+            self._song.back_to_arranger = bool(value)
             return {
-                "back_to_arranger": True
+                "back_to_arranger": self._song.back_to_arranger
             }
         except Exception as e:
             self.log_message("Error setting back to arranger: " + str(e))
@@ -2089,7 +2108,7 @@ class AbletonMCP(ControlSurface):
         """Stop session clips, return to arrangement, optionally seek, and play."""
         try:
             self._song.stop_all_clips()
-            self._song.back_to_arranger = True
+            self._song.back_to_arranger = False      # False = arrangement plays (True = session overrides it)
             if time is not None:
                 self._song.current_song_time = float(time)
             self._song.start_playing()
