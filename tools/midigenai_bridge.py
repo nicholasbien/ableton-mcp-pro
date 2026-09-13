@@ -24,7 +24,7 @@ Switching to a new model release in the future:
   1. Push the new model to a new subfolder on the HF repo
   2. Either bump `MIDIGENAI_VERSION` env var (no code change), pass
      `"version"` in the JSON payload, or update midigenai's
-     `v2/hub.py::DEFAULT_VERSION`. Whichever is most convenient.
+     `hub.py::DEFAULT_VERSION`. Whichever is most convenient.
 
 Run with whatever Python env has the `[ai]` extras installed:
   pip install "ableton-mcp-pro[ai]"
@@ -47,8 +47,8 @@ def _get_generator(repo_id, version):
     global _GENERATOR
     cache_key = (repo_id, version)
     if _GENERATOR is None or _GENERATOR[0] != cache_key:
-        from midigenai import load_v2_from_hub
-        gen = load_v2_from_hub(version=version, repo_id=repo_id)
+        from midigenai import load_from_hub
+        gen = load_from_hub(version=version, repo_id=repo_id)
         _GENERATOR = (cache_key, gen)
     return _GENERATOR[1]
 

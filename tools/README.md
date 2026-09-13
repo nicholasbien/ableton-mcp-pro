@@ -7,7 +7,7 @@ processes. The agent (or you) drives them via shell, no MCP server changes.
 
 CLI that turns Ableton clip notes into an AI-generated continuation. Wraps
 the [`midigenai`](https://github.com/nicholasbien/midigenai) package
-(currently a 25M custom transformer, event-based tokenization). The model
+(a 113M custom transformer, event-based tokenization; `v2-100m` by default). The model
 is auto-downloaded from
 [huggingface.co/nicholasbien/midigenai](https://huggingface.co/nicholasbien/midigenai)
 on first use and cached at `~/.cache/huggingface/`.
@@ -95,7 +95,7 @@ echo '{ "notes": [...], "version": "v2" }' | python tools/midigenai_bridge.py
 export MIDIGENAI_VERSION=v2
 python tools/midigenai_bridge.py < cfg.json
 
-# 3) Permanent: bump DEFAULT_VERSION in midigenai/v2/hub.py
+# 3) Permanent: bump DEFAULT_VERSION in midigenai/hub.py
 ```
 
 To see what's published:
