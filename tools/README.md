@@ -141,3 +141,23 @@ MAESTRO + POP909 + GiantMIDI). Best results come from:
 First call ≈ 2–4s on CPU (download + model load + ~250 tokens). Subsequent
 calls in the same Python process reuse the loaded generator, so they run at
 ~70 notes/s. The bridge keeps the generator alive in a module-level cache.
+
+## demo_song.py — build, arrange and record a techno track
+
+A worked example of the clip-editing, device, return-track and drum-pad tools next to the
+older ones, and the integration test for them. On an empty set with the control surface
+enabled:
+
+```bash
+python tools/demo_song.py [texture.wav]
+```
+
+It builds seven tracks (909 kit, Operator sub, Drift acid, Electric stabs and a duplicated
+wide double, Analog pad, Drift lead, an audio texture), reads the kit's pad map with
+`get_drum_pads` instead of assuming GM notes, derives every drum variation from one groove
+with `remove_notes` / `duplicate_region` / `duplicate_clip_loop`, quantizes a loosely played
+bassline, transposes chord regions, A/Bs devices with `set_device_enabled`, adds an Echo
+return and drops the unused stock one, records 104 bars of scenes into the arrangement,
+places a lead and warped/pitched audio clips straight into the arrangement, and finally
+records the master through a Resampling track. It prints the recorded file's path. About
+eight minutes end to end, most of it real-time recording.
