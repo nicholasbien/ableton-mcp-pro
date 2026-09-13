@@ -368,28 +368,6 @@ def create_clip(ctx: Context, track_index: int, clip_index: int, length: float =
         return f"Error creating clip: {str(e)}"
 
 @mcp.tool()
-def create_audio_clip(ctx: Context, track_index: int, clip_index: int, file_path: str) -> str:
-    """
-    Create an audio clip from a file path in a clip slot on an audio track.
-
-    Parameters:
-    - track_index: The index of the audio track
-    - clip_index: The index of the clip slot
-    - file_path: Absolute path to an audio file (wav, aiff, flac, mp3, etc.)
-    """
-    try:
-        ableton = get_ableton_connection()
-        result = ableton.send_command("create_audio_clip", {
-            "track_index": track_index,
-            "clip_index": clip_index,
-            "file_path": file_path
-        })
-        return f"Created audio clip '{result.get('name', '')}' (length: {result.get('length', 0)} beats) at track {track_index}, slot {clip_index}"
-    except Exception as e:
-        logger.error(f"Error creating audio clip: {str(e)}")
-        return f"Error creating audio clip: {str(e)}"
-
-@mcp.tool()
 def get_arrangement_clip_notes(ctx: Context, track_index: int, arrangement_clip_index: int) -> str:
     """
     Read MIDI notes from a clip in the arrangement view (not session view).
@@ -478,9 +456,11 @@ def create_arrangement_audio_clip(
     file_path: str,
     time: float,
     length: Optional[float] = None,
+    start_offset: Optional[float] = None,
 ) -> str:
     """
-    Create an audio clip in the arrangement view at a given position.
+    Create an audio clip in the arrangement view at a given position. This is the only way to
+    get a sample into Live over the socket (session slots cannot take a file path).
     Requires Live 11+ (uses Track.create_audio_clip API).
 
     Parameters:
@@ -488,6 +468,7 @@ def create_arrangement_audio_clip(
     - file_path: Absolute path to an audio file (wav, aiff, flac, mp3, etc.)
     - time: Arrangement position in beats where the clip should start
     - length: Optional clip length in beats. If omitted, the file's natural length is used.
+    - start_offset: Optional beats to skip at the head of the sample (preroll before a hit)
     """
     try:
         ableton = get_ableton_connection()
@@ -498,6 +479,8 @@ def create_arrangement_audio_clip(
         }
         if length is not None:
             params["length"] = length
+        if start_offset is not None:
+            params["start_offset"] = start_offset
         result = ableton.send_command("create_arrangement_audio_clip", params)
         return (
             f"Created arrangement audio clip '{result.get('name', '')}' "
@@ -1753,6 +1736,49 @@ def set_clip_warp_mode(ctx: Context, track_index: int, clip_index: int, warp_mod
     except Exception as e:
         logger.error(f"Error setting clip warp mode: {str(e)}")
         return f"Error setting clip warp mode: {str(e)}"
+
+@mcp.tool()
+def create_arrangement_audio_clips_batch(ctx: Context, track_index: int, file_path: str, times: List[float],
+                                         length: Optional[float] = None, start_offset: Optional[float] = None) -> str:
+    """Place the same sample at many beat positions on one audio track in a single call
+    (32 kicks in one round trip instead of 32). length/start_offset apply to every placement."""
+    try:
+        params = {"track_index": track_index, "file_path": file_path, "times": times}
+        if length is not None: params["length"] = length
+        if start_offset is not None: params["start_offset"] = start_offset
+        result = get_ableton_connection().send_command("create_arrangement_audio_clips_batch", params)
+        failed = result.get("failed_count", 0)
+        return f"Placed {result.get('placed_count', 0)}/{len(times)} clips of '{file_path.split('/')[-1]}' on track {track_index}" + (f" ({failed} failed)" if failed else "")
+    except Exception as e:
+        logger.error(f"Error batch-placing arrangement audio clips: {str(e)}")
+        return f"Error batch-placing arrangement audio clips: {str(e)}"
+
+@mcp.tool()
+def get_clip_info(ctx: Context, track_index: int, clip_index: int = 0, arrangement_clip_index: int = None) -> str:
+    """Read one clip's properties: length, loop points, start/end markers, mute, and for audio
+    clips warping, warp mode, pitch, gain and file. Session slot, or an arrangement clip via arrangement_clip_index."""
+    try:
+        result = get_ableton_connection().send_command("get_clip_info", {
+            "track_index": track_index, "clip_index": clip_index, "arrangement_clip_index": arrangement_clip_index})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting clip info: {str(e)}")
+        return f"Error getting clip info: {str(e)}"
+
+@mcp.tool()
+def resample_master(ctx: Context, seconds: Optional[float] = None, name: str = "master rec", start_time: float = 0.0) -> str:
+    """Record the main mix to an audio file: creates an audio track on Resampling, arms only it,
+    plays the arrangement from start_time with record mode on until the last clip ends (or
+    `seconds`), then returns the recorded file's path. Blocks for the whole song. Live has no
+    export command, so this is how an agent gets a mixdown out."""
+    try:
+        params = {"name": name, "start_time": start_time}
+        if seconds is not None: params["seconds"] = seconds
+        result = get_ableton_connection().send_command("resample_master", params)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error resampling master: {str(e)}")
+        return f"Error resampling master: {str(e)}"
 
 # Main execution
 @mcp.tool()

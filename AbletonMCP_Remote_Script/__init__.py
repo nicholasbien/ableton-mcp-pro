@@ -256,6 +256,13 @@ class AbletonMCP(ControlSurface):
                 device_index = params.get("device_index", 0)
                 parameter_index = params.get("parameter_index", 0)
                 response["result"] = self._get_clip_envelope(track_index, clip_index, device_index, parameter_index)
+            elif command_type == "get_clip_info":
+                response["result"] = self._get_clip_info(params.get("track_index", 0), params.get("clip_index", 0),
+                                                         params.get("arrangement_clip_index"))
+            elif command_type == "resample_master":
+                # Runs on the socket thread: plays the arrangement in real time while recording
+                response["result"] = self._resample_master(params.get("seconds"), params.get("name", "master rec"),
+                                                           params.get("start_time", 0.0))
             elif command_type == "get_drum_pads":
                 track_index = params.get("track_index", 0)
                 device_index = params.get("device_index", 0)
@@ -266,7 +273,7 @@ class AbletonMCP(ControlSurface):
                 start_time = params.get("start_time", 0.0)
                 response["result"] = self._record_arrangement(sections, start_time)
             elif command_type in ["create_midi_track", "set_track_name",
-                                 "create_clip", "create_audio_clip", "create_arrangement_audio_clip",
+                                 "create_clip", "create_arrangement_audio_clip", "create_arrangement_audio_clips_batch",
                                  "create_arrangement_midi_clip", "delete_arrangement_clip",
                                  "add_notes_to_clip", "set_clip_name",
                                  "set_tempo", "fire_clip", "stop_clip",
@@ -323,17 +330,17 @@ class AbletonMCP(ControlSurface):
                             clip_index = params.get("clip_index", 0)
                             length = params.get("length", 4.0)
                             result = self._create_clip(track_index, clip_index, length)
-                        elif command_type == "create_audio_clip":
-                            track_index = params.get("track_index", 0)
-                            clip_index = params.get("clip_index", 0)
-                            file_path = params.get("file_path", "")
-                            result = self._create_audio_clip(track_index, clip_index, file_path)
                         elif command_type == "create_arrangement_audio_clip":
                             track_index = params.get("track_index", 0)
                             file_path = params.get("file_path", "")
                             time = params.get("time", 0.0)
                             length = params.get("length", None)
-                            result = self._create_arrangement_audio_clip(track_index, file_path, time, length)
+                            start_offset = params.get("start_offset", None)
+                            result = self._create_arrangement_audio_clip(track_index, file_path, time, length, start_offset)
+                        elif command_type == "create_arrangement_audio_clips_batch":
+                            result = self._create_arrangement_audio_clips_batch(
+                                params.get("track_index", 0), params.get("file_path", ""), params.get("times", []),
+                                params.get("length", None), params.get("start_offset", None))
                         elif command_type == "create_arrangement_midi_clip":
                             track_index = params.get("track_index", 0)
                             time = params.get("time", 0.0)
@@ -1900,11 +1907,28 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error creating arrangement MIDI clip: " + str(e))
             raise
 
-    def _create_arrangement_audio_clip(self, track_index, file_path, time, length=None):
+    def _create_arrangement_audio_clips_batch(self, track_index, file_path, times, length=None, start_offset=None):
+        """The same sample at several beat positions in one round trip (repeated hits)."""
+        results = []
+        for t in times:
+            try:
+                self._create_arrangement_audio_clip(track_index, file_path, float(t), length, start_offset)
+                results.append({"time": float(t), "ok": True})
+            except Exception as e:
+                results.append({"time": float(t), "ok": False, "error": str(e)})
+        return {"track_index": track_index, "file_path": file_path,
+                "placed_count": sum(1 for r in results if r["ok"]),
+                "failed_count": sum(1 for r in results if not r["ok"]), "results": results}
+
+    def _create_arrangement_audio_clip(self, track_index, file_path, time, length=None, start_offset=None):
         """Create an audio clip from a file path in the arrangement view at a given position.
 
         Uses Live 11+ Track.create_audio_clip(file_path, position) API.
-        length is optional - if provided, the clip is trimmed/looped to that length.
+        length is optional: the clip loops its first `length` beats (Live 12 refuses end_time on
+        a fresh arrangement audio clip, so the loop end is trimmed instead); a following clip
+        truncates the region.
+        start_offset (beats) skips the head of the sample (a whoosh before the hit): the
+        clip's start marker is advanced by that much.
         """
         try:
             if track_index < 0 or track_index >= len(self._song.tracks):
@@ -1921,57 +1945,35 @@ class AbletonMCP(ControlSurface):
             # Live 11+ API: create_audio_clip(file_path, position) returns the new Clip
             clip = track.create_audio_clip(file_path, float(time))
 
+            length_note = ""
             if length is not None and clip is not None:
                 try:
                     clip.end_time = float(time) + float(length)
-                except Exception:
-                    pass  # length adjustment is best-effort
+                except Exception as le:
+                    try:                                    # end_time may be read-only: trim the loop instead
+                        clip.looping = True
+                        clip.loop_end = clip.start_marker + float(length)
+                    except Exception as le2:
+                        length_note = "length not applied: %s / %s" % (le, le2)
+                        self.log_message(length_note)
+            if start_offset is not None and clip is not None:
+                try:
+                    clip.start_marker = clip.start_marker + float(start_offset)
+                except Exception as oe:
+                    self.log_message("start_offset not applied: " + str(oe))
 
             result = {
                 "track_index": track_index,
                 "file_path": file_path,
-                "start_time": float(time),
+                "start_time": clip.start_time if clip else float(time),
                 "length": clip.length if clip else 0,
+                "start_marker": clip.start_marker if clip else None,
                 "name": clip.name if clip else "",
+                "note": length_note,
             }
             return result
         except Exception as e:
             self.log_message("Error creating arrangement audio clip: " + str(e))
-            raise
-
-    def _create_audio_clip(self, track_index, clip_index, file_path):
-        """Create an audio clip from a file path in a clip slot on an audio track."""
-        try:
-            if track_index < 0 or track_index >= len(self._song.tracks):
-                raise IndexError("Track index out of range")
-
-            track = self._song.tracks[track_index]
-
-            if not track.has_audio_input:
-                raise Exception("Track {0} is not an audio track".format(track_index))
-
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
-                raise IndexError("Clip index out of range")
-
-            clip_slot = track.clip_slots[clip_index]
-
-            if clip_slot.has_clip:
-                raise Exception("Clip slot already has a clip")
-
-            # Create audio clip from file path
-            clip_slot.create_clip(file_path)
-
-            clip = clip_slot.clip
-            result = {
-                "name": clip.name if clip else "unknown",
-                "length": clip.length if clip else 0,
-                "file_path": file_path,
-                "track_index": track_index,
-                "clip_index": clip_index
-            }
-            return result
-        except Exception as e:
-            self.log_message("Error creating audio clip: " + str(e))
             raise
 
     def _add_notes_to_clip(self, track_index, clip_index, notes):
@@ -2498,6 +2500,135 @@ class AbletonMCP(ControlSurface):
             return {"warp_mode": clip.warp_mode}
         except Exception as e:
             self.log_message("Error setting clip warp mode: " + str(e))
+            raise
+
+    def _get_clip_info(self, track_index, clip_index, arrangement_clip_index=None):
+        """Everything about one clip: length, loop and markers, mute, and for audio clips
+        warping, warp mode, pitch, gain, file. Session slot or arrangement clip."""
+        try:
+            clip = self._session_clip(track_index, clip_index, arrangement_clip_index=arrangement_clip_index)
+            info = {
+                "name": clip.name, "length": clip.length, "is_midi_clip": clip.is_midi_clip,
+                "is_audio_clip": clip.is_audio_clip, "looping": clip.looping,
+                "loop_start": clip.loop_start, "loop_end": clip.loop_end,
+                "start_marker": clip.start_marker, "end_marker": clip.end_marker,
+                "muted": clip.muted, "is_playing": clip.is_playing, "is_recording": clip.is_recording,
+                "color_index": clip.color_index,
+            }
+            if arrangement_clip_index is not None:
+                info["start_time"] = clip.start_time; info["end_time"] = clip.end_time
+            else:
+                info["launch_mode"] = clip.launch_mode; info["launch_quantization"] = clip.launch_quantization
+            if clip.is_audio_clip:
+                info.update({"warping": clip.warping, "warp_mode": clip.warp_mode, "pitch_coarse": clip.pitch_coarse,
+                             "pitch_fine": clip.pitch_fine, "gain": clip.gain,
+                             "gain_display": getattr(clip, "gain_display_string", ""), "file_path": clip.file_path,
+                             "sample_length": getattr(clip, "sample_length", None)})
+            return info
+        except Exception as e:
+            self.log_message("Error getting clip info: " + str(e))
+            raise
+
+    def _resample_master(self, seconds=None, name="master rec", start_time=0.0):
+        """Record the main output to an audio file: an audio track on Resampling, armed alone,
+        arrangement playing from start_time with record mode on, until the last arrangement
+        clip ends (or `seconds`). Returns the recorded clip's file path. Runs on the socket
+        thread like record_arrangement; Live's own state is touched on the main thread."""
+        import time as time_module
+        holder = {"track": None, "index": None}
+        def do_on_main(fn):
+            done = threading.Event(); err = [None]
+            def task():
+                try:
+                    fn()
+                except Exception as e:
+                    err[0] = e
+                done.set()
+            self.schedule_message(0, task)
+            done.wait(timeout=5.0)
+            if err[0]:
+                raise err[0]
+        try:
+            tempo = self._song.tempo
+            end_beat = 0.0
+            for tr in self._song.tracks:
+                for c in tr.arrangement_clips:
+                    end_beat = max(end_beat, c.end_time)
+            if seconds is None:
+                if end_beat <= start_time:
+                    raise Exception("nothing in the arrangement to record (pass `seconds` to record anyway)")
+                seconds = (end_beat - start_time + 4.0) * 60.0 / tempo
+            def make_track():
+                if self._song.is_playing:
+                    self._song.stop_playing()
+                self._song.create_audio_track(-1)
+                track = self._song.tracks[-1]
+                track.name = name
+                for rt in track.available_input_routing_types:
+                    if str(rt.display_name) == "Resampling":
+                        track.input_routing_type = rt
+                        break
+                else:
+                    raise Exception("no Resampling input on the new track")
+                holder["track"] = track; holder["index"] = list(self._song.tracks).index(track)
+            def route_and_arm():
+                track = holder["track"]
+                chans = list(track.available_input_routing_channels)
+                if chans:
+                    track.input_routing_channel = chans[0]
+                track.current_monitoring_state = 2          # Off: never feed the main mix back into itself
+                for tr in self._song.tracks:                # Live auto-arms new tracks; an armed MIDI track in
+                    if tr.can_be_armed and tr.arm:          # record mode records over its clip instead of playing
+                        tr.arm = False
+                track.arm = True
+            def locate():
+                self._song.back_to_arranger = False        # the arrangement plays (True = session overrides it)
+                self._song.current_song_time = float(start_time)
+            def record_on():
+                self._song.record_mode = 1
+            def go():
+                self._song.stop_all_clips()
+                self._song.back_to_arranger = False
+                self._song.current_song_time = float(start_time)
+                self._song.start_playing()
+            # the same steps as separate socket calls work; one combined task did not start the transport
+            for step in (make_track, route_and_arm, locate, record_on, go):
+                do_on_main(step)
+                time_module.sleep(0.15)
+            state = {"playing": True, "pos": 0.0}
+            def read_state():
+                state["playing"] = bool(self._song.is_playing); state["pos"] = float(self._song.current_song_time)
+            t0 = time_module.monotonic(); stopped_early = False
+            time_module.sleep(1.0)                          # let the transport start before watching it
+            while time_module.monotonic() - t0 < seconds:
+                time_module.sleep(0.5)
+                do_on_main(read_state)                      # LOM reads are only reliable on the main thread
+                if not state["playing"]:
+                    stopped_early = True
+                    break
+            out = {}
+            def finish():
+                self._song.stop_playing()
+                self._song.record_mode = 0
+                holder["track"].arm = False
+                self._song.current_song_time = float(start_time)
+            def read_clip():
+                clips = list(holder["track"].arrangement_clips)
+                rec = clips[-1] if clips else None
+                out["file_path"] = rec.file_path if rec else None
+                out["length_beats"] = rec.length if rec else 0.0
+            do_on_main(finish)
+            for _ in range(12):                              # the recorded clip appears a moment after stop
+                time_module.sleep(0.5)
+                do_on_main(read_clip)
+                if out.get("file_path"):
+                    break
+            return {"track_index": holder["index"], "track_name": name,
+                    "file_path": out.get("file_path"), "length_beats": out.get("length_beats", 0.0),
+                    "seconds": round(seconds, 1), "stopped_at_beat": state["pos"], "stopped_early": stopped_early,
+                    "note": "the transport stopped before the end (audio device change or a manual stop?)" if stopped_early else ""}
+        except Exception as e:
+            self.log_message("Error resampling master: " + str(e))
             raise
 
     def _get_device_type(self, device):
