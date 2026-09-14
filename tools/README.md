@@ -142,6 +142,14 @@ First call ≈ 2–4s on CPU (download + model load + ~250 tokens). Subsequent
 calls in the same Python process reuse the loaded generator, so they run at
 ~70 notes/s. The bridge keeps the generator alive in a module-level cache.
 
+## setup_jam_set.py — the Live side of a fluidclaude jam
+
+Builds `you` (keyboard in, no instrument, MIDI To IAC Bus 3), `you (sound)`, `reply` (IAC Bus 2 /
+Ch. 5) and, with `--loops bass:2,drums:10`, one track per fluidclaude loop channel; prints the
+fluidclaude commands. Add an audio track "sc in" (Ext. In 1/2, Monitor In) yourself when the sc
+engine plays into Live through BlackHole. Never leave `you` on All Ins: that includes the bus
+fluidclaude plays on and every loop becomes a "call".
+
 ## live_client.py — talk to the Remote Script from a script
 
 `live(cmd, params)` sends one command over the port-9877 socket and returns its result, plus
