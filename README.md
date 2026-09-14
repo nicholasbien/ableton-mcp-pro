@@ -228,6 +228,16 @@ to generate melody continuations. The agent reads a clip with
 `add_notes_to_clip` — no MCP server changes needed. See
 [tools/README.md](tools/README.md) for setup, dependencies, and usage.
 
+## Timing and recording gotchas (Live 12, measured)
+
+- **Live auto-arms every new track.** An armed MIDI track with Monitor In in arrangement record mode records over its clip instead of playing it, so a master resample with instrument tracks left armed is silent. `resample_master` disarms everything but its own recorder; do the same in scripts.
+- **`Song.back_to_arranger` is True while session clips override the arrangement.** `play_arrangement` / `set_back_to_arranger` set it False (what the Back to Arrangement button does); the older code set True and, with record mode on, recorded silence over every track.
+- **Socket readings of `current_song_time` go stale under recording load** (a reading 15 bars behind was seen); never time anything from them. MIDI clock out of an IAC port is what fluidclaude follows.
+- **External MIDI into Live lands ~32 ms late** on tracks that monitor input (IAC transit plus Live's input latency at 512 samples; only ~3 ms on tracks with monitoring Off, because Live shifts recorded MIDI by the monitoring latency). fluidclaude's `latency auto` measures and cancels it.
+- **Audio into Live through BlackHole needs one aggregate device** (BlackHole + interface, one clock source, drift correction on BlackHole) as both Live's input and output, with the BlackHole output pair disabled in Output Config. With BlackHole as input and another device as output the audio arrives 100-200 ms late with ±50 ms jitter; with Main Out on the BlackHole pair, Live feeds back into itself. Setup details: fluidclaude's docs/live-setup.md.
+- **Changing Live's audio preferences while a script is creating tracks crashed Live.** Stop scripting first.
+- **Recording files are finalized late.** A recorded clip's AIFF gets its real header only when the clip is finalized, and the file is deleted if its track is deleted first; read the PCM after the size settles and before deleting the track.
+
 ## Known Limitations
 
 - **Arrangement clips are read-only** — The LOM can't create/delete arrangement clips directly. Use `record_arrangement` to record from session, or record an empty scene to erase.
