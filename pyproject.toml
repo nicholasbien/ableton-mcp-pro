@@ -25,6 +25,10 @@ ai = [
     "symusic",
     "huggingface_hub",
 ]
+midi = [
+    "mido",
+    "python-rtmidi",
+]
 
 [project.scripts]
 ableton-mcp-pro = "MCP_Server.server:main"
