@@ -74,9 +74,10 @@ class AbletonMCP(ControlSurface):
         self._events = []
         self._event_seq = 0
         self._event_cond = threading.Condition()
-        self._listeners = []
+        self._song_listeners = []
+        self._track_listeners = {}  # Live object pointer -> removers
         self._listened_song = None
-        self._listened_tracks = []
+        self._listened_song_ptr = None
         try:
             self._attach_listeners()
         except Exception as e:
@@ -699,7 +700,8 @@ class AbletonMCP(ControlSurface):
                 del self._events[:len(self._events) - EVENT_BUFFER_SIZE]
             self._event_cond.notify_all()
 
-    def _listen(self, subject, prop, callback):
+    def _listen(self, subject, prop, callback, into):
+        """Add a Live listener and append its remover to the list `into`."""
         add = getattr(subject, "add_%s_listener" % prop, None)
         if add is None:
             return
@@ -709,52 +711,88 @@ class AbletonMCP(ControlSurface):
             self.log_message("Can't listen to %s: %s" % (prop, e))
             return
         remove = getattr(subject, "remove_%s_listener" % prop)
-        self._listeners.append(lambda: remove(callback))
+        into.append(lambda: remove(callback))
+
+    @staticmethod
+    def _ptr(obj):
+        # Every access to a Live object returns a new Python wrapper; _live_ptr identifies the object
+        return getattr(obj, "_live_ptr", id(obj))
 
     def _detach_listeners(self):
-        for remove in self._listeners:
+        removers = self._song_listeners + [r for rs in self._track_listeners.values() for r in rs]
+        for remove in removers:
             try:
                 remove()
             except Exception:
                 pass
-        self._listeners = []
+        self._song_listeners = []
+        self._track_listeners = {}
 
     def _attach_listeners(self):
-        """(Re)attach every listener to the current song. Main thread only."""
+        """Attach every listener to the current song from scratch. Main thread only."""
         self._detach_listeners()
         song = self.song()
         self._listened_song = song
-        self._listened_tracks = self._track_list(song)
+        self._listened_song_ptr = self._ptr(song)
+        into = self._song_listeners
 
         def song_prop(prop):
-            self._listen(song, prop, lambda: self._emit(prop, value=getattr(song, prop)))
+            self._listen(song, prop, lambda: self._emit(prop, value=getattr(song, prop)), into)
 
         for prop in ("is_playing", "tempo", "record_mode", "signature_numerator",
                      "signature_denominator", "loop", "metronome", "arrangement_overdub"):
             song_prop(prop)
-        # Track or scene lists changed: re-attach so new tracks are watched too
+        # Track or scene lists changed: watch the new tracks too
         for prop in ("tracks", "scenes", "return_tracks"):
-            self._listen(song, prop, lambda p=prop: self._on_structure_changed(p))
+            self._listen(song, prop, lambda p=prop: self._on_structure_changed(p), into)
         view = song.view
         self._listen(view, "selected_track",
                      lambda: self._emit("selected_track", name=view.selected_track.name,
-                                        index=self._track_index(view.selected_track)))
+                                        index=self._track_index(view.selected_track)), into)
         self._listen(view, "selected_scene",
                      lambda: self._emit("selected_scene", name=view.selected_scene.name,
-                                        index=list(song.scenes).index(view.selected_scene)))
-        for i, track in enumerate(song.tracks):
-            self._attach_track_listeners(i, track)
-        for i, track in enumerate(song.return_tracks):
-            self._attach_track_listeners(-2 - i, track)
-        self._attach_track_listeners(-1, song.master_track)
+                                        index=self._scene_index(view.selected_scene)), into)
+        self._sync_track_listeners()
 
-    def _attach_track_listeners(self, index, track):
+    def _sync_listeners(self):
+        """Follow a new set or added/removed tracks, leaving existing listeners alone. Main thread only.
+
+        Removing and re-adding a listener drops notifications Live has queued for it, so this only
+        touches what changed."""
+        try:
+            if self._ptr(self.song()) != self._listened_song_ptr:
+                self._attach_listeners()
+            else:
+                self._sync_track_listeners()
+        except Exception as e:
+            self.log_message("Syncing listeners failed: " + str(e))
+
+    def _sync_track_listeners(self):
+        song = self._listened_song
+        current = dict((self._ptr(t), t) for t in
+                       list(song.tracks) + list(song.return_tracks) + [song.master_track])
+        for ptr in list(self._track_listeners):
+            if ptr not in current:
+                for remove in self._track_listeners.pop(ptr):
+                    try:
+                        remove()
+                    except Exception:
+                        pass
+        for ptr, track in current.items():
+            if ptr not in self._track_listeners:
+                self._track_listeners[ptr] = []
+                self._attach_track_listeners(track, self._track_listeners[ptr])
+
+    def _attach_track_listeners(self, track, into):
+        is_master = self._ptr(track) == self._ptr(self._listened_song.master_track)
+        is_return = any(self._ptr(track) == self._ptr(t) for t in self._listened_song.return_tracks)
+
         def slot_event(kind, attr):
             def cb():
                 slot = getattr(track, attr)
                 if kind == "clip_fired" and slot == -1:
                     return  # the fired clip started (or was cancelled): clip_playing tells which
-                data = {"track_index": index, "track": track.name, "clip_index": slot}
+                data = {"track_index": self._track_index(track), "track": track.name, "clip_index": slot}
                 if slot >= 0:
                     try:
                         data["clip"] = track.clip_slots[slot].clip.name
@@ -763,49 +801,50 @@ class AbletonMCP(ControlSurface):
                 self._emit(kind, **data)
             return cb
 
-        if index >= 0:
+        if not is_master and not is_return:
             # >= 0: session clip slot; -1: stopped; -2: playing the arrangement
-            self._listen(track, "playing_slot_index", slot_event("clip_playing", "playing_slot_index"))
-            self._listen(track, "fired_slot_index", slot_event("clip_fired", "fired_slot_index"))
-        if index != -1:
+            self._listen(track, "playing_slot_index", slot_event("clip_playing", "playing_slot_index"), into)
+            self._listen(track, "fired_slot_index", slot_event("clip_fired", "fired_slot_index"), into)
+        if not is_master:
             for prop in ("mute", "solo", "name"):
                 self._listen(track, prop, lambda p=prop: self._emit(
-                    "track_" + p, track_index=index, track=track.name, value=getattr(track, p)))
-            if index >= 0 and getattr(track, "can_be_armed", False):
+                    "track_" + p, track_index=self._track_index(track), track=track.name,
+                    value=getattr(track, p)), into)
+            if not is_return and getattr(track, "can_be_armed", False):
                 self._listen(track, "arm", lambda: self._emit(
-                    "track_arm", track_index=index, track=track.name, value=track.arm))
-
-    def _track_list(self, song):
-        return list(song.tracks) + list(song.return_tracks)
-
-    def _sync_listeners(self):
-        """Re-attach if the set or its track list changed since the last attach. Main thread only."""
-        try:
-            song = self.song()
-            if song is not self._listened_song or self._track_list(song) != self._listened_tracks:
-                self._attach_listeners()
-        except Exception as e:
-            self.log_message("Syncing listeners failed: " + str(e))
+                    "track_arm", track_index=self._track_index(track), track=track.name,
+                    value=track.arm), into)
 
     def _track_index(self, track):
+        """Current index (tracks 0+, master -1, returns -2, -3...), looked up when the event fires."""
         song = self._listened_song
-        if track == song.master_track:
+        ptr = self._ptr(track)
+        if ptr == self._ptr(song.master_track):
             return -1
-        tracks = list(song.tracks)
-        if track in tracks:
-            return tracks.index(track)
-        returns = list(song.return_tracks)
-        return -2 - returns.index(track) if track in returns else None
+        for i, t in enumerate(song.tracks):
+            if self._ptr(t) == ptr:
+                return i
+        for i, t in enumerate(song.return_tracks):
+            if self._ptr(t) == ptr:
+                return -2 - i
+        return None
+
+    def _scene_index(self, scene):
+        ptr = self._ptr(scene)
+        for i, s in enumerate(self._listened_song.scenes):
+            if self._ptr(s) == ptr:
+                return i
+        return None
 
     def _on_structure_changed(self, prop):
         self._emit(prop + "_changed", count=len(getattr(self._listened_song, prop)))
         # Can't add listeners from inside a notification; do it on the next tick (commands sent
-        # through this script re-sync before they return, see _on_main_thread)
+        # through this script sync before they return, see _on_main_thread)
         self.schedule_message(1, self._sync_listeners)
 
     def _get_events(self, since=0, timeout=0.0, limit=500):
         """Events with seq > since. With timeout > 0, wait up to that long (max 30 s) for one."""
-        if self.song() is not self._listened_song:
+        if self._ptr(self.song()) != self._listened_song_ptr:
             # A different set was loaded; point the listeners at it
             try:
                 self._on_main_thread(self._sync_listeners)

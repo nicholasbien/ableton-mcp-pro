@@ -155,8 +155,41 @@ fluidclaude plays on and every loop becomes a "call".
 `live(cmd, params)` sends one command over the port-9877 socket and returns its result, plus
 `tracks()`, `track_by_name(name)`, `clear_arrangement_clips(track)` and `set_param(track, device,
 name, value)`. The same protocol the MCP server speaks, for scripts and tests that don't want an
-MCP round trip (the resample and clip-tool tests were written against it). Every call costs
-0.4–1.5 s; keep it out of anything time-critical.
+MCP round trip (the resample and clip-tool tests were written against it). It keeps one
+connection open and reconnects once if Live restarted.
+
+Every call costs 0.2–1.5 s, most of it waiting for Live's next tick, so batch:
+
+```python
+from live_client import live, batch, ref, events
+
+# one round trip, one Live tick; ref(i, key) is result i's key
+idx = batch([("create_midi_track", {"index": -1}),
+             ("set_track_name", {"track_index": ref(0, "index"), "name": "Bass"}),
+             ("create_clip", {"track_index": ref(0, "index"), "clip_index": 0, "length": 4.0}),
+             ("add_notes_to_clip", {"track_index": ref(0, "index"), "clip_index": 0, "notes": notes})])[0]["index"]
+
+for ev in events():          # blocks; clip launches, transport, tempo, selection, mute/solo/arm...
+    print(ev["type"], ev)
+```
+
+`batch` raises on the first failing command (the earlier ones did run); `stop_on_error=False`
+runs them all and returns each `{status, result|message}`. Measured on Live 12.4: 10 reads 2.0 s
+one by one vs 0.4 s batched, 10 writes 4.0 s vs 0.4 s. `record_arrangement`, `resample_master`
+and `get_events` can't be batched.
+
+`events()` long-polls `get_events` on its own connection and yields dicts with `seq`, `type`,
+`time` (wall clock) and `beat` (song position when Live reported it). Types: `is_playing`,
+`tempo`, `record_mode`, `signature_numerator`/`_denominator`, `loop`, `metronome`,
+`arrangement_overdub` (all with `value`); `clip_fired` / `clip_playing` (`track_index`,
+`clip_index`: slot, -1 stopped, -2 playing the arrangement); `track_mute`/`_solo`/`_arm`/`_name`;
+`selected_track`, `selected_scene`; `tracks_changed`/`scenes_changed`/`return_tracks_changed`.
+Live keeps the last 1000; a `missed` event means you fell further behind than that. Don't time
+music from `beat` (it's read when the listener fires, and socket delivery adds 0.2 s+); follow
+MIDI clock with `live_midi.Clock` for that.
+
+`python tools/test_batch_events.py` checks both against a running Live, on scratch tracks it
+deletes afterwards.
 
 ## live_midi.py — the fast path: MIDI in and out of Live
 
