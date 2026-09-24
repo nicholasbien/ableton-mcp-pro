@@ -1983,7 +1983,7 @@ class AbletonMCP(ControlSurface):
                 norm_val = 0
                 if (p.max - p.min) != 0:
                     norm_val = (p.value - p.min) / (p.max - p.min)
-                parameters.append({
+                entry = {
                     "index": i,
                     "name": p.name,
                     "value": p.value,
@@ -1992,7 +1992,18 @@ class AbletonMCP(ControlSurface):
                     "max": p.max,
                     "is_quantized": p.is_quantized,
                     "is_enabled": p.is_enabled
-                })
+                }
+                # What Live's UI shows ("-6.0 dB", "1/4", "Saw D") and, for menus, every option in order
+                try:
+                    entry["display"] = p.str_for_value(p.value)
+                except Exception:
+                    pass
+                if p.is_quantized:
+                    try:
+                        entry["items"] = list(p.value_items)
+                    except Exception:
+                        pass
+                parameters.append(entry)
             return {
                 "track_index": track_index,
                 "track_name": track.name,
