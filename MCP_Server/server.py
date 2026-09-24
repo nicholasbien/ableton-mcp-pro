@@ -123,7 +123,7 @@ class AbletonConnection:
             "set_track_monitoring", "get_track_routing",
             "set_track_input_routing", "set_track_output_routing", "set_metronome",
             "set_clip_envelope", "clear_clip_envelope",
-            "undo", "redo"
+            "undo", "redo", "batch"
         ]
         
         try:
@@ -141,6 +141,10 @@ class AbletonConnection:
             # Set timeout based on command type
             if command_type == "record_arrangement":
                 timeout = 600.0  # 10 minutes for arrangement recording
+            elif command_type == "batch":
+                timeout = max(15.0, 0.5 * len(command["params"].get("commands", [])) + 5.0)
+            elif command_type == "get_events":
+                timeout = float(command["params"].get("timeout", 0) or 0) + 10.0
             elif is_modifying_command:
                 timeout = 15.0
             else:
@@ -1848,6 +1852,48 @@ def set_track_output_routing(ctx: Context, track_index: int, routing_type_name: 
     except Exception as e:
         logger.error(f"Error setting output routing: {str(e)}")
         return f"Error setting output routing: {str(e)}"
+
+
+@mcp.tool()
+def batch(ctx: Context, commands: List[Dict[str, Any]], stop_on_error: bool = True) -> str:
+    """Run many commands in one round trip and one Live tick, in order. Use it whenever you'd
+    otherwise make several calls in a row (building a track, programming a kit, setting a mix):
+    30 commands take about as long as 1.
+
+    commands: [{"type": "<command>", "params": {...}}, ...] where <command> is the name of any other
+    tool here except load_drum_kit, record_arrangement, resample_master and get_events, with that
+    tool's parameters.
+    A parameter can use an earlier command's result: {"$ref": [i, "key"]} is result i's "key",
+    e.g. the index of a track created by command 0:
+      [{"type": "create_midi_track", "params": {"index": -1}},
+       {"type": "set_track_name", "params": {"track_index": {"$ref": [0, "index"]}, "name": "Bass"}},
+       {"type": "create_clip", "params": {"track_index": {"$ref": [0, "index"]}, "clip_index": 0, "length": 4.0}}]
+    stop_on_error: stop at the first failure (default) or run the rest anyway.
+    Returns every command's result or error.
+    """
+    try:
+        result = get_ableton_connection().send_command("batch", {"commands": commands, "stop_on_error": stop_on_error})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error running batch: {str(e)}")
+        return f"Error running batch: {str(e)}"
+
+@mcp.tool()
+def get_events(ctx: Context, since: int = 0, timeout: float = 0.0) -> str:
+    """What happened in Live since you last looked: clips launched/stopped (by you or the user),
+    transport start/stop, tempo and time signature changes, track selection, mute/solo/arm/rename,
+    tracks or scenes added or removed. Each event has a seq, type, wall-clock time and song beat.
+
+    since: the "latest" value from the previous call (0 = everything still buffered, up to 1000 events)
+    timeout: seconds to wait for a new event if there is none yet (max 10 here; 0 = return at once)
+    """
+    try:
+        timeout = min(max(timeout, 0.0), 10.0)
+        result = get_ableton_connection().send_command("get_events", {"since": since, "timeout": timeout})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error getting events: {str(e)}")
+        return f"Error getting events: {str(e)}"
 
 
 def main():
