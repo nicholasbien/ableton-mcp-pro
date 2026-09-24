@@ -157,3 +157,44 @@ fluidclaude plays on and every loop becomes a "call".
 name, value)`. The same protocol the MCP server speaks, for scripts and tests that don't want an
 MCP round trip (the resample and clip-tool tests were written against it). Every call costs
 0.4–1.5 s; keep it out of anything time-critical.
+
+## als.py — read and edit .als files offline
+
+A Live Set is gzipped XML. `als.py` (standard library only) reads and edits it without Live
+running, for things the Live Object Model can't reach: relinking samples after a drive or
+project move, checking a set's tempo/tracks/devices before opening it, batch edits across sets.
+Understands the Live 10, 11 and 12 layouts (`MasterTrack` vs `MainTrack`, `ColorIndex` vs
+`Color`, `SceneNames` vs `Scenes`, Live 10's directory-element FileRefs vs 11+'s `Path`).
+
+```bash
+python tools/als.py summary SET.als [--json]      # version, tempo, time sig, tracks, devices,
+                                                  # clip counts, returns, main, scenes, locators
+python tools/als.py samples SET.als [--missing]   # every referenced sample, ok/MISSING
+python tools/als.py set-tempo SET.als 124 -o OUT.als
+python tools/als.py rename-track SET.als "2-Audio" "Vox" -o OUT.als    # index or name
+python tools/als.py set-color SET.als 0 12 -o OUT.als                  # palette 0-69
+python tools/als.py relink SET.als /Users/old/Samples/ /Volumes/ext/Samples/ -o OUT.als
+```
+
+As a module: `load(path)`, `save(tree, path)`, `summary(tree)`, `set_tempo`, `rename_track`,
+`set_track_color`, `list_samples`, `relink_samples`, `find_track`. Track indices match the MCP
+server (0+ regular, -1 main, -2/-3 returns A/B).
+
+- **Writes only where you tell it.** Edit commands require `-o` (it may equal the input to edit
+  in place). Saves go to a temp file and are renamed into place. Close the set in Live first,
+  or Live will overwrite your edit on its next save.
+- **Byte-identical round trips.** An unedited load/save reproduces Live's XML exactly (checked
+  on ~450 real sets, Live 10.1 through 12.4), so a diff of the decompressed XML shows only your
+  edit. Live 10 escapes `"` in attributes as `&quot;`, 11/12 use single quotes; the file's style
+  is kept.
+- **Tempo** lives in the main track mixer's `Tempo/Manual`, but Live also saves a one-point
+  arrangement envelope that the arrangement actually plays; `set-tempo` updates both. A set
+  with real tempo automation keeps its automation (`summary` shows `tempo (automated)`).
+- **Samples** are the `SampleRef` file references (Simpler/Sampler/Drum Rack pads, audio
+  clips). `exists` is true when the absolute path exists, or the set/project-relative path
+  resolves from the set's location (how Live finds samples after a project folder moves).
+  `relink` rewrites absolute paths by string prefix (end both prefixes with `/` to match
+  whole folders). For Live 10 sets it rewrites the search hint and file name; the binary alias
+  in `<Data>` is left as is, and Live falls back to the hint when the alias doesn't resolve.
+
+`python tools/test_als.py` runs the tests against tiny synthetic Live 10 and Live 12 sets.
