@@ -2594,25 +2594,35 @@ class AbletonMCP(ControlSurface):
                     if tr.can_be_armed and tr.arm:          # record mode records over its clip instead of playing
                         tr.arm = False
                 track.arm = True
+            def stop_clips():
+                self._song.stop_all_clips()                # session clips would override the arrangement
             def locate():
                 self._song.back_to_arranger = False        # the arrangement plays (True = session overrides it)
                 self._song.current_song_time = float(start_time)
             def record_on():
                 self._song.record_mode = 1
             def go():
-                self._song.stop_all_clips()
-                self._song.back_to_arranger = False
-                self._song.current_song_time = float(start_time)
                 self._song.start_playing()
-            # the same steps as separate socket calls work; one combined task did not start the transport
-            for step in (make_track, route_and_arm, locate, record_on, go):
+            # One step per main-thread task with a pause between: the order that recorded a whole song
+            # when sent as separate socket calls. The previous version (clips stopped, song located and
+            # transport started in one task) once stopped again after about 0.1 s.
+            for step in (make_track, route_and_arm, stop_clips, locate, record_on, go):
                 do_on_main(step)
-                time_module.sleep(0.15)
+                time_module.sleep(0.3)
             state = {"playing": True, "pos": 0.0}
             def read_state():
                 state["playing"] = bool(self._song.is_playing); state["pos"] = float(self._song.current_song_time)
+            restarts = 0
+            for _ in range(2):                              # if the transport dies at once, start it again (at most twice)
+                time_module.sleep(1.0)
+                do_on_main(read_state)
+                if state["playing"]:
+                    break
+                restarts += 1
+                for step in (locate, record_on, go):
+                    do_on_main(step)
+                    time_module.sleep(0.3)
             t0 = time_module.monotonic(); stopped_early = False
-            time_module.sleep(1.0)                          # let the transport start before watching it
             while time_module.monotonic() - t0 < seconds:
                 time_module.sleep(0.5)
                 do_on_main(read_state)                      # LOM reads are only reliable on the main thread
@@ -2636,7 +2646,7 @@ class AbletonMCP(ControlSurface):
                 do_on_main(read_clip)
                 if out.get("file_path"):
                     break
-            return {"track_index": holder["index"], "track_name": name,
+            return {"track_index": holder["index"], "track_name": name, "restarts": restarts,
                     "file_path": out.get("file_path"), "length_beats": out.get("length_beats", 0.0),
                     "seconds": round(seconds, 1), "stopped_at_beat": state["pos"], "stopped_early": stopped_early,
                     "note": "the transport stopped before the end (audio device change or a manual stop?)" if stopped_early else ""}
