@@ -243,7 +243,7 @@ to generate melody continuations. The agent reads a clip with
 
 ## Known Limitations
 
-- **Arrangement clips are read-only** — The LOM can't create/delete arrangement clips directly. Use `record_arrangement` to record from session, or record an empty scene to erase.
+- **Arrangement automation** — Clip envelope tools work on session clips; arrangement track automation can't be edited live. `tools/als.py clear-automation` deletes it offline.
 - **Session-view audio clips** — `ClipSlot.create_clip()` only accepts a length (for MIDI clips), not file paths, so samples can only be placed in the arrangement (`create_arrangement_audio_clip`).
 - **No audio export** — Live has no export command; `resample_master` records the main mix through a Resampling track instead.
 - **Stale song reference** — First command after an Ableton restart may fail (retry works). The script auto-refreshes its internal reference.

@@ -331,7 +331,7 @@ DS instruments (DS Kick, DS Snare, etc.) respond to any MIDI note — pitch 60 w
 
 ## Arrangement Recording
 
-The LOM does NOT support creating arrangement clips directly — they are read-only. The only way to build an arrangement is to **record session clips into the arrangement**.
+Arrangement clips can be placed directly with `create_arrangement_midi_clip` / `create_arrangement_audio_clip` (Live 11+ `Track.create_midi_clip` / `Track.create_audio_clip`) and removed with `delete_arrangement_clip`. Recording session clips into the arrangement with `record_arrangement` is the other route, and the one that captures clip automation.
 
 ### Available Commands
 
@@ -477,17 +477,9 @@ The cached `self._song = self.song()` reference becomes invalid when Ableton swa
 
 While the transport is stopped, a seek lands a moment later (the value read back in the same tick is the old one), and `start_playing()` plays from the insert marker rather than `current_song_time`. So `set_song_time` followed by `start_playback` can start from bar 1. `play_arrangement` starts first and seeks while playing. `continue_playing()` called from the Remote Script does not start the transport at all. `resample_master` therefore records from bar 1 by stopping twice (which returns the marker to 0), turning record on, then playing; from later in the song it plays, seeks up to 2 bars before `start_time` while playing, and punches record on before the playhead gets there (so the take includes that pre-roll). Turning record on before a plain `start_playing()` would record a sliver at the insert marker instead.
 
-### No Arrangement Clip Deletion
-
-Cannot delete or trim individual arrangement clips via the API. Only workaround is recording an empty scene (no clips) over the section to erase it.
-
 ### Recording Timing (Solved)
 
 Scene transitions previously drifted ~4 beats due to `do_on_main` round-trip latency causing late fires that 1-bar quantization pushed to the next bar. Fixed by using `fire_and_forget` (`schedule_message(0, fn)` without waiting) for scene fires. Fires 2 beats before the target boundary; quantization snaps to the correct bar. Pre-scheduling via `schedule_message(ticks, fn)` was also tried but failed — the tick rate is unreliable and caused early fires.
-
-### Arrangement Clips Are Read-Only
-
-The LOM only supports reading arrangement clips, not creating/modifying/deleting them. The only way to build an arrangement is recording from session view. The only way to erase is recording silence.
 
 ## Clip Automation
 
