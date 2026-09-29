@@ -56,22 +56,47 @@ Roadmap for achieving full Ableton control via MCP.
 ### Advanced
 - [x] **Undo** — `undo()`
 - [x] **Redo** — `redo()`
+- [x] **Batch** — `batch(commands)` — many commands in one Live tick
+- [x] **Events** — `get_events()` — Live listeners push changes to a pollable buffer
+
+### Clip Editing
+- [x] **Remove notes** — `remove_notes(...)`
+- [x] **Quantize** — `quantize_clip(...)`
+- [x] **Duplicate loop / region** — `duplicate_clip_loop(...)`, `duplicate_region(...)`
+- [x] **Clip info** — `get_clip_info(...)`
+- [x] **Audio clip gain / pitch / warping / warp mode** — `set_clip_gain`, `set_clip_pitch`, `set_clip_warping`, `set_clip_warp_mode`
+- [x] **Arrangement clips too** — clip editing tools take `arrangement_clip_index`
+
+### Direct Arrangement Editing
+- [x] **Create MIDI clip** — `create_arrangement_midi_clip(track_index, time, length, notes?)`
+- [x] **Create audio clip from file** — `create_arrangement_audio_clip(track_index, file_path, time, length?)`, `create_arrangement_audio_clips_batch(...)` (Live 11+ `Track.create_audio_clip`, no Max for Live needed)
+- [x] **Read / delete** — `get_arrangement_clip_notes(...)`, `delete_arrangement_clip(...)`
+- [x] **Record from an offset** — `record_arrangement(sections, start_time)`
+
+### Devices, Returns & Routing
+- [x] **Device bypass** — `set_device_enabled(...)`
+- [x] **Parameter display text** — `get_device_parameters` returns display values and menu items
+- [x] **Drum pads** — `get_drum_pads(...)`
+- [x] **Return tracks** — `create_return_track()`, `delete_return_track(...)`
+- [x] **Track routing** — `get_track_routing`, `set_track_input_routing` (with channel), `set_track_output_routing`, `set_track_monitoring`
+- [x] **Stop all clips** — `stop_all_clips()`
+
+### Bouncing & Offline Tools
+- [x] **Resample master** — `resample_master(...)` records the main mix through a Resampling track
+- [x] **Mix check** — `tools/mix_check.py` + the mix-check skill: loudness, low end, compressor gain reduction against references
+- [x] **Offline set editing** — `tools/als.py`: `summary`, `samples`, `set-tempo`, `rename-track`, `set-color`, `relink`, `clear-automation`
+- [x] **MIDI fast path** — `tools/live_midi.py`: notes out, clock in over IAC buses
+- [x] **Max for Live device** — alternative bridge on port 9878 (`MaxForLive/`)
 
 ---
 
 ## Known Limitations
 
-### Arrangement Clips Are Read-Only
-The LOM cannot create, delete, or modify arrangement clips directly. The only way to populate the arrangement is by recording session clips into it using `record_arrangement`. To erase content, record an empty scene over the region.
-
 ### Recording Timing (Solved)
 Scene transitions previously drifted ~4 beats due to `do_on_main` round-trip latency causing late fires that quantization pushed to the next bar. Fixed by using `fire_and_forget` (no round-trip wait) + 1-bar quantization. Scenes now fire 2 beats before the target boundary; quantization snaps to the correct bar. Pre-scheduling via `schedule_message(ticks, fn)` was also tried but failed — the tick rate is unreliable and caused early fires.
 
-### Audio Clip Loading
-- `browser.load_item()` works for instruments/effects but .alc audio clips only load device chains, not the audio clip itself
-- `ClipSlot.create_clip()` in the Remote Script API only accepts a `double` (length for MIDI clips), not file paths
-- The file-path-based audio clip creation may be Max for Live specific
-- **Workaround**: manually drag audio clips from Ableton's browser
+### Session-View Audio Clips
+`ClipSlot.create_clip()` only accepts a length (for MIDI clips), not file paths, so samples can only be placed in the arrangement (`create_arrangement_audio_clip`).
 
 ### Stale Song Reference
 After Ableton restarts or swaps documents, cached `self._song` becomes invalid. Fixed by refreshing `self._song = self.song()` at the start of every `_process_command`, but the first command after a restart may still fail (retry works).
@@ -80,32 +105,24 @@ After Ableton restarts or swaps documents, cached `self._song` becomes invalid. 
 
 ## Remaining Work
 
-### High Priority: Recording Accuracy
-- [x] **Clip trigger quantization** — `record_arrangement` now sets `song.clip_trigger_quantization = 4` (1 Bar) before recording and restores original value after. Scene fires snap to bar boundaries.
-- [x] **Fire-and-forget scene fires** — Scene fires use `schedule_message(0, fn)` without waiting for round-trip completion. Eliminates `do_on_main` latency that caused late fires + quantization drift.
-- [x] **Auto-disarm tracks** — All tracks disarmed before recording to prevent stray MIDI input during erase or recording.
-- [x] **Cancellation support** — Scheduled callbacks check a `cancelled` flag; set on error to prevent stale scene fires.
-- [x] **Play arrangement** — `play_arrangement(time)` stops session clips, switches to arrangement view, and plays from a position.
+### Recording Accuracy
+- [x] **Clip trigger quantization** — `record_arrangement` sets 1-bar quantization while recording and restores it after
+- [x] **Fire-and-forget scene fires** — no `do_on_main` round-trip latency
+- [x] **Auto-disarm tracks** — all tracks disarmed before recording
+- [x] **Cancellation support** — scheduled callbacks check a `cancelled` flag
+- [x] **Play arrangement** — `play_arrangement(time)`
 - [ ] **Verify recording results** — After `record_arrangement`, automatically call `get_full_arrangement` and validate clip boundaries match expected positions.
-
-### Audio Support
-- [ ] **Investigate Max for Live API** — M4L may expose `ClipSlot.create_clip(file_path)` for audio files. Could add an M4L device as a bridge.
-- [ ] **Audio clip from file** — If M4L bridge works, `create_audio_clip(track_index, clip_index, file_path)` for wav/aiff/flac/mp3
-
-### Mixing & Routing
-- [ ] **Track routing** — `set_track_input/output(track_index, routing_type, channel)`
 
 ### Nice-to-Haves
 - [ ] **Capture MIDI** — `song.capture_midi()`
-- [ ] **Groove pool** — apply groove templates to clips
 - [ ] **Cross-fader** — control crossfader assignment and position
-- [ ] **Arrangement automation** — Currently automation only applies to session clips and gets baked in during recording. Direct arrangement envelope editing would require M4L. Deleting it works offline: `tools/als.py clear-automation SET.als TRACK [--param volume|pan|all] [--db N] -o OUT.als` (close the set first, reopen after).
+- [ ] **Arrangement automation** — Clip envelope tools only apply to session clips, and automation gets baked in during recording. Live editing of arrangement envelopes isn't supported. Deleting it works offline: `tools/als.py clear-automation SET.als TRACK [--param volume|pan|all] [--db N] -o OUT.als` (close the set first, reopen after).
 
 ---
 
 ## MCP Limitations for Music Skills
 
-The following MCP capabilities are missing and limit what music production skills can fully execute. Listed in priority order by how many skills they'd unlock.
+The following MCP capabilities are missing or unconfirmed and limit what music production skills can fully execute. Listed in priority order by how many skills they'd unlock.
 
 ### Priority 1: Rack Creation & Chain Management
 
@@ -126,9 +143,9 @@ The following MCP capabilities are missing and limit what music production skill
 
 **Workaround today:** Load effects in series on a single chain (loses the parallel Dry/Wet routing). Or use multiple tracks panned/routed to achieve the same result.
 
-### Priority 2: MIDI Effect Loading
+### Priority 2: MIDI Effect Loading (probably works, untested)
 
-**What's missing:** Unclear if `load_instrument_or_effect` can load MIDI effects (Chord, Scale, Arpeggiator) — these live in a different part of Ableton's device chain (before the instrument).
+**Status:** The browser code resolves `midi_effects` paths, so `load_instrument_or_effect` can reach Chord, Scale and Arpeggiator. Nobody has confirmed yet that the effect lands before the instrument in the chain. Test that, then mark this done and update the skills below.
 
 **Skills blocked:**
 - **supersaw-chords** — Uses Chord MIDI effect for automatic octave doubling
@@ -140,19 +157,9 @@ The following MCP capabilities are missing and limit what music production skill
 
 **Workaround today:** Program the notes manually (e.g., write octave-doubled notes instead of using Chord device, write arpeggiated patterns instead of using Arpeggiator).
 
-### Priority 3: Return Track Creation
+### ~~Priority 3: Return Track Creation~~ (done)
 
-**What's missing:** `set_send_level` exists but there's no way to create new return tracks or load effects onto them. Returns use `track_index: -2, -3, etc.` but only if they already exist.
-
-**Skills blocked:**
-- **ukg-drums** — Send 1 (Drum Bus) + Send 2 (Redux) processing architecture
-- **dub-techno** — Multi-send reverb architecture (2-3 reverb returns)
-- **house-drums** — Parallel compression on a return track
-- **techno-drums** — Short dark reverb + ping-pong delay sends
-
-**How to implement:** The LOM has `song.create_return_track()`. Add a `create_return_track()` MCP tool that creates a return and returns its index. Then effects can be loaded via `load_instrument_or_effect(track_index=-2, ...)`.
-
-**Workaround today:** Use insert effects instead of sends (less flexible but functional).
+`create_return_track()` and `delete_return_track()` exist. Load effects on a new return with `load_instrument_or_effect(track_index=-2, ...)`. Skills that fell back to insert effects (ukg-drums, house-drums, techno-drums) can now use sends.
 
 ### Priority 4: Groove Pool / Swing Templates
 

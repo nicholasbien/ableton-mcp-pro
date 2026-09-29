@@ -3,7 +3,7 @@
 Control Ableton Live through MCP tools. This project has two parts:
 
 1. **Remote Script** (`AbletonMCP_Remote_Script/__init__.py`) — runs inside Ableton, listens on TCP port 9877
-2. **MCP Server** (`MCP_Server/server.py`) — exposes 50+ tools to AI assistants via FastMCP
+2. **MCP Server** (`MCP_Server/server.py`) — exposes 80 tools to AI assistants via FastMCP
 
 ## Key Conventions
 
@@ -11,7 +11,7 @@ Control Ableton Live through MCP tools. This project has two parts:
 - **Parameter values**: Always normalized 0.0–1.0, regardless of actual range
 - **Clip positions**: In beats (4.0 = 1 bar at 4/4)
 - **MIDI notes**: pitch 0–127 (C3=48, C4=60), velocity 0–127
-- **Arrangement is read-only** — can only populate via `record_arrangement` from session clips
+- **Arrangement clips** — place directly with `create_arrangement_midi_clip` / `create_arrangement_audio_clip`, or record session scenes with `record_arrangement`
 
 ## Music Production Skills
 
