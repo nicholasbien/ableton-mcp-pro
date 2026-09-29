@@ -99,7 +99,7 @@ After Ableton restarts or swaps documents, cached `self._song` becomes invalid. 
 - [ ] **Capture MIDI** — `song.capture_midi()`
 - [ ] **Groove pool** — apply groove templates to clips
 - [ ] **Cross-fader** — control crossfader assignment and position
-- [ ] **Arrangement automation** — Currently automation only applies to session clips and gets baked in during recording. Direct arrangement envelope editing would require M4L.
+- [ ] **Arrangement automation** — Currently automation only applies to session clips and gets baked in during recording. Direct arrangement envelope editing would require M4L. Deleting it works offline: `tools/als.py clear-automation SET.als TRACK [--param volume|pan|all] [--db N] -o OUT.als` (close the set first, reopen after).
 
 ---
 

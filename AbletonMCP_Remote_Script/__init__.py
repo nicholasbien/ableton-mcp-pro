@@ -1362,7 +1362,7 @@ class AbletonMCP(ControlSurface):
             all_tracks = list(self._song.tracks)
             for i, track in enumerate(all_tracks):
                 clips = []
-                if hasattr(track, 'arrangement_clips'):
+                if not track.is_foldable:
                     for clip in track.arrangement_clips:
                         is_audio = clip.is_audio_clip if hasattr(clip, 'is_audio_clip') else False
                         clip_info = {
@@ -2402,9 +2402,11 @@ class AbletonMCP(ControlSurface):
         try:
             self._song.stop_all_clips()
             self._song.back_to_arranger = False      # False = arrangement plays (True = session overrides it)
+            # start_playing() plays from the insert marker, and a seek made while stopped lands a
+            # moment later, so start first and seek while playing (that lands at once)
+            self._song.start_playing()
             if time is not None:
                 self._song.current_song_time = float(time)
-            self._song.start_playing()
             return {
                 "playing": True,
                 "position": self._song.current_song_time
@@ -2850,7 +2852,7 @@ class AbletonMCP(ControlSurface):
             tempo = self._song.tempo
             end_beat = 0.0
             for tr in self._song.tracks:
-                if is_bounce(tr):
+                if is_bounce(tr) or tr.is_foldable:
                     continue
                 for c in tr.arrangement_clips:
                     end_beat = max(end_beat, c.end_time)
@@ -2886,17 +2888,29 @@ class AbletonMCP(ControlSurface):
                         tr.arm = False
                 track.arm = True
             def locate():
+                self._song.stop_all_clips()
                 self._song.back_to_arranger = False        # the arrangement plays (True = session overrides it)
                 self._song.current_song_time = float(start_time)
+            located = {"pos": -1.0}
+            def read_pos():
+                located["pos"] = float(self._song.current_song_time)
             def record_on():
                 self._song.record_mode = 1
             def go():
-                self._song.stop_all_clips()
-                self._song.back_to_arranger = False
-                self._song.current_song_time = float(start_time)
-                self._song.start_playing()
+                # start_playing() would play from the insert marker, not from current_song_time
+                self._song.continue_playing()
             # the same steps as separate socket calls work; one combined task did not start the transport
-            for step in (make_track, route_and_arm, locate, record_on, go):
+            for step in (make_track, route_and_arm, locate):
+                do_on_main(step)
+                time_module.sleep(0.15)
+            for _ in range(20):                             # a seek while stopped lands a moment later
+                do_on_main(read_pos)
+                if abs(located["pos"] - float(start_time)) < 0.01:
+                    break
+                time_module.sleep(0.1)
+            else:
+                raise Exception("could not move the playhead to beat {0} (at {1})".format(start_time, located["pos"]))
+            for step in (record_on, go):
                 do_on_main(step)
                 time_module.sleep(0.15)
             state = {"playing": True, "pos": 0.0}
