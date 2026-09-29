@@ -65,9 +65,8 @@ Not every skill needs all sections. A bass skill doesn't need pattern diagrams. 
 - Applying groove templates from Groove Pool
 - Slicing audio to MIDI
 - Macro mapping
-- Creating return tracks
 - Grouping tracks
-- Resampling/freezing/flattening
+- Freezing/flattening
 
 If a skill requires unsupported operations for its core workflow, either find a workaround or don't create the skill. A skill that can't be executed is worse than no skill.
 

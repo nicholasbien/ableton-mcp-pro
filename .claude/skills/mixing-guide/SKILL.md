@@ -38,6 +38,8 @@ description: Mix and master a track in Ableton. Use when the user asks about mix
   - Brightness/high-end
   - Sub bass level
   - Overall balance
+- **Measure it**: the mix-check skill bounces the track and runs `tools/mix_check.py` against the
+  references (loudness, true peak, band balance, low-end mono), then fixes the biggest gaps
 
 ## Step 4: EQ Cleanup
 - **Cut low end from tracks that don't need it**: hi-hats, snares, percussion, synths

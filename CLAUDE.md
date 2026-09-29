@@ -15,7 +15,7 @@ Control Ableton Live through MCP tools. This project has two parts:
 
 ## Music Production Skills
 
-20 skills in `.claude/skills/` activate automatically based on what the user asks for. They cover genres (techno, house, trance, garage, bass music, ambient, synthwave) and production workflows (mixing, arrangement, swing).
+21 skills in `.claude/skills/` activate automatically based on what the user asks for. They cover genres (techno, house, trance, garage, bass music, ambient, synthwave) and production workflows (mixing, mix checks against references, arrangement, swing).
 
 See [SKILL_AUTHORING_GUIDE.md](SKILL_AUTHORING_GUIDE.md) for creating new skills.
 

@@ -2826,7 +2826,14 @@ class AbletonMCP(ControlSurface):
         clip ends (or `seconds`). Returns the recorded clip's file path. Runs on the socket
         thread like record_arrangement; Live's own state is touched on the main thread."""
         import time as time_module
-        holder = {"track": None, "index": None}
+        holder = {"track": None, "index": None, "muted": []}
+        def is_bounce(tr):
+            # an earlier resample_master track: playing it back during this take doubles the mix,
+            # and its few ms of offset cancels the sub
+            try:
+                return str(tr.input_routing_type.display_name) == "Resampling"
+            except Exception:
+                return False
         def do_on_main(fn):
             done = threading.Event(); err = [None]
             def task():
@@ -2843,6 +2850,8 @@ class AbletonMCP(ControlSurface):
             tempo = self._song.tempo
             end_beat = 0.0
             for tr in self._song.tracks:
+                if is_bounce(tr):
+                    continue
                 for c in tr.arrangement_clips:
                     end_beat = max(end_beat, c.end_time)
             if seconds is None:
@@ -2852,6 +2861,10 @@ class AbletonMCP(ControlSurface):
             def make_track():
                 if self._song.is_playing:
                     self._song.stop_playing()
+                for tr in self._song.tracks:
+                    if is_bounce(tr) and not tr.mute:
+                        tr.mute = True
+                        holder["muted"].append(tr.name)
                 self._song.create_audio_track(-1)
                 track = self._song.tracks[-1]
                 track.name = name
@@ -2917,6 +2930,7 @@ class AbletonMCP(ControlSurface):
             return {"track_index": holder["index"], "track_name": name,
                     "file_path": out.get("file_path"), "length_beats": out.get("length_beats", 0.0),
                     "seconds": round(seconds, 1), "stopped_at_beat": state["pos"], "stopped_early": stopped_early,
+                    "muted_earlier_bounces": holder["muted"],
                     "note": "the transport stopped before the end (audio device change or a manual stop?)" if stopped_early else ""}
         except Exception as e:
             self.log_message("Error resampling master: " + str(e))
