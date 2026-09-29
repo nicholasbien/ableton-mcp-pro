@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -406,9 +407,48 @@ def test_cli(d: str) -> None:
     assert not [f for f in os.listdir(d) if f.endswith(".tmp")], "temp files left behind"
 
 
+def test_clear_automation(d: str) -> None:
+    src = os.path.join(d, "auto.als")
+    write_als(src, LIVE12.replace("{old}", "/x"))
+    tree = als.load(src)
+    track = als.find_track(tree, 0)
+    mixer = ET.SubElement(track.find("DeviceChain"), "Mixer")
+    for tag, tid in (("Volume", "100"), ("Pan", "101")):
+        node = ET.SubElement(mixer, tag)
+        ET.SubElement(node, "Manual", Value="0.5")
+        ET.SubElement(node, "AutomationTarget", Id=tid)
+    envs = ET.SubElement(ET.SubElement(track, "AutomationEnvelopes"), "Envelopes")
+    for pid in ("100", "101", "200"):                  # volume, pan, a device parameter
+        env = ET.SubElement(envs, "AutomationEnvelope")
+        ET.SubElement(ET.SubElement(env, "EnvelopeTarget"), "PointeeId", Value=pid)
+    pointees = lambda: [e.find("EnvelopeTarget/PointeeId").get("Value") for e in envs]
+    assert als.clear_automation(tree, "1-Bass", "volume", db=0) == 1
+    assert pointees() == ["101", "200"]
+    assert mixer.find("Volume/Manual").get("Value") == "1"
+    assert als.clear_automation(tree, 0, "volume") == 0
+    assert als.clear_automation(tree, 0, "all") == 2 and pointees() == []
+    try:
+        als.clear_automation(tree, 1, "volume")       # the audio track has no mixer here
+        raise AssertionError("expected AlsError")
+    except als.AlsError:
+        pass
+    main = als.find_track(tree, -1)                    # tempo automation survives "all"
+    assert als.clear_automation(tree, -1, "all") == 0
+    assert len(main.findall("AutomationEnvelopes/Envelopes/AutomationEnvelope")) == 1
+    out = os.path.join(d, "auto-out.als")
+    als.save(tree, out)
+    cli = [sys.executable, os.path.join(HERE, "als.py")]
+    r = subprocess.run(cli + ["clear-automation", out, "1-Bass", "--db", "-6", "-o", out],
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and "removed 0 volume" in r.stdout, r.stderr
+    v = float(als.find_track(als.load(out), 0).find("DeviceChain/Mixer/Volume/Manual").get("Value"))
+    assert abs(v - 0.501) < 0.001, v
+
+
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as d:
         test_live12(d)
         test_live10(d)
         test_cli(d)
+        test_clear_automation(d)
     print("ok")

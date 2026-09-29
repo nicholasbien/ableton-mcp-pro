@@ -1,6 +1,7 @@
 """
 Read and edit Ableton Live Set files (.als = gzipped XML) offline, for the things the Live Object
-Model can't do (relink samples, inspect a set without opening it) or when Live isn't running.
+Model can't do (relink samples, delete arrangement automation, inspect a set without opening it)
+or when Live isn't running.
 Standard library only; understands the Live 10, 11 and 12 layouts.
 
     python tools/als.py summary SET.als [--json]
@@ -9,6 +10,7 @@ Standard library only; understands the Live 10, 11 and 12 layouts.
     python tools/als.py rename-track SET.als "2-Audio" "Vox" -o OUT.als     # index or name
     python tools/als.py set-color SET.als 0 12 -o OUT.als
     python tools/als.py relink SET.als /Users/old/Samples /Volumes/ext/Samples -o OUT.als
+    python tools/als.py clear-automation SET.als DRUMS --db 0 -o OUT.als  # --param volume|pan|all
 
     import sys; sys.path.insert(0, "path/to/ableton-mcp-pro/tools")
     import als
@@ -366,6 +368,50 @@ def rename_track(tree: ET.ElementTree, index_or_name, new_name: str) -> None:
             n.set("Value", new_name)
 
 
+def clear_automation(tree: ET.ElementTree, index_or_name, param: str = "volume",
+                     db: float | None = None) -> int:
+    """Delete a track's arrangement automation, which the Live Object Model can't touch.
+    param: "volume", "pan", or "all" (every envelope on the track: mixer, sends, devices; the
+    main track's tempo and time signature are kept). db sets the volume fader afterwards (the
+    arrangement stops reading the envelope, so the fader's Manual value is what plays).
+    Returns the number of envelopes removed."""
+    if param not in ("volume", "pan", "all"):
+        raise AlsError("param must be volume, pan or all")
+    t = find_track(tree, index_or_name)
+    envs = t.find("AutomationEnvelopes/Envelopes")
+    mixer = t.find("DeviceChain/Mixer")
+    keep = set()
+    if mixer is not None:
+        for tag in ("Tempo", "TimeSignature"):
+            target = mixer.find(tag + "/AutomationTarget")
+            if target is not None:
+                keep.add(target.get("Id"))
+    if param == "all":
+        wanted = None
+    else:
+        node = None if mixer is None else mixer.find("Volume" if param == "volume" else "Pan")
+        target = None if node is None else node.find("AutomationTarget")
+        if target is None:
+            raise AlsError(f"track has no {param} parameter")
+        wanted = {target.get("Id")}
+    removed = 0
+    if envs is not None:
+        for env in list(envs):
+            pid = _val(env, "EnvelopeTarget/PointeeId")
+            if pid in keep or (wanted is not None and pid not in wanted):
+                continue
+            envs.remove(env)
+            removed += 1
+    if db is not None:
+        vol = None if mixer is None else mixer.find("Volume/Manual")
+        if vol is None:
+            raise AlsError("track has no volume fader")
+        if not -70 <= db <= 6:
+            raise AlsError("volume must be between -70 and +6 dB")
+        vol.set("Value", _fmt(10 ** (db / 20)))            # stored as linear gain, 1 = 0 dB
+    return removed
+
+
 def set_track_color(tree: ET.ElementTree, index_or_name, color_index: int) -> None:
     """Set a track's palette color (Live's 70-color palette: 0-69)."""
     if not 0 <= int(color_index) <= 69:
@@ -498,6 +544,10 @@ def _main(argv=None) -> int:
     edit("rename-track", "rename a track (index or current name)", "track", "new_name")
     edit("set-color", "set a track's color (0-69)", "track", "color")
     edit("relink", "rewrite sample paths starting with OLD to start with NEW", "old", "new")
+    edit("clear-automation", "delete a track's arrangement automation", "track")
+    p = sub.choices["clear-automation"]
+    p.add_argument("--param", choices=("volume", "pan", "all"), default="volume")
+    p.add_argument("--db", type=float, help="then set the volume fader to this many dB")
 
     a = ap.parse_args(argv)
     try:
@@ -528,6 +578,11 @@ def _main(argv=None) -> int:
         elif a.cmd == "set-color":
             set_track_color(tree, a.track, int(a.color))
             msg = f"color of {a.track!r} -> {a.color}"
+        elif a.cmd == "clear-automation":
+            n = clear_automation(tree, a.track, a.param, a.db)
+            msg = f"removed {n} {a.param} envelope(s) from {a.track!r}"
+            if a.db is not None:
+                msg += f", volume -> {a.db} dB"
         elif a.cmd == "relink":
             n = relink_samples(tree, a.old, a.new)
             msg = f"relinked {n} sample reference(s)"
