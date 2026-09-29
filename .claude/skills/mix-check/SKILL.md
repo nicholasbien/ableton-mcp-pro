@@ -42,9 +42,17 @@ Change sources before the master. Master EQ is a last 1-3 dB, not a rescue.
 | sub high, bass fine | sub track or kick tail too loud | lower the sub track 1-2 dB; shorten kick notes/decay |
 | sub low | sub track quiet, or phase cancellation | check sub level; check nothing plays the same low part twice (old bounce tracks, duplicated clips) |
 | mono < 0.95 | stereo spread on bass (Spread, chorus, wide presets) | Utility on bass tracks: Bass Mono On, Bass Freq 120 Hz; Operator Spread 0 on sub |
-| TP over 0 / clipped | limiter catching only sample peaks | Limiter: Ceiling -1.0 dB, or lower Input Gain; reduce master Saturator drive |
+| TP over 0 / clipped | limiter catching only sample peaks | Limiter `Mode` True Peak (ceiling -0.3), or Ceiling -1.0 dB; reduce master Saturator drive |
 | LUFS low | master too gentle | raise Limiter Input Gain in 1 dB steps; watch crest stay above 8 |
 | LUFS high, crest < 8 | over-limited | lower Input Gain; the drop will hit harder, not quieter, on a club system |
+
+## Checking Compressor / Glue Gain Reduction
+Live's API exposes no gain-reduction meters. Measure it instead:
+1. Master Saturator and Limiter: `Device On` Off (so only the compressor differs)
+2. `resample_master` 10-15 s of the drop (`seconds`, `start_time` in beats) with the Glue on, then again with its `Device On` Off
+3. Compare 100 ms levels of the two takes: GR = level(bypassed) + makeup - level(on). Turn Saturator and Limiter back on
+- Bus glue should read 1-3 dB on the drop. 6 dB or more means the mix bus is too hot: lower the input (EQ Eight `Output` -6 dB as the first master device) and raise the threshold, rather than softening the ratio. A Glue `Range` of 4 dB caps it
+- Raising track levels to fix a dark mix raises the bus level too; re-check GR after any level pass (in the session a level pass left the Glue at 8 dB)
 
 ## Pitfalls
 - **Read parameter displays, not numbers**: `get_device_parameters` returns `display` ("-22 dB", "Saw D") and `items` for menus. Set by label or aim at a displayed value; a normalized guess once left a master Saturator at -22 dB
