@@ -171,21 +171,16 @@ Ableton's Live Object Model is NOT thread-safe. The Remote Script handles this w
 
 #### 1. Remote Script (`AbletonMCP_Remote_Script/__init__.py`)
 
-**For a read-only command**, add handling in the socket thread's command dispatch (around where `get_session_info` is handled):
+Add the name to `READ_COMMANDS` or `MODIFYING_COMMANDS` at the top of the file, then route it in
+`_run_read` or `_run_modifying`:
 ```python
-elif command == "your_new_command":
+elif command_type == "your_new_command":
     result = self._your_new_method(params.get("param1"), params.get("param2"))
 ```
-
-**For a state-modifying command**, add it to the list of modifying commands and add routing in `main_thread_task`:
-```python
-# In the modifying commands list:
-if command in ["create_clip", "add_notes_to_clip", ..., "your_new_command"]:
-
-# In main_thread_task routing:
-elif command == "your_new_command":
-    result = self._your_new_method(params.get("param1"), params.get("param2"))
-```
+`_process_command` runs read commands on the socket thread and modifying ones on the main thread
+(`_on_main_thread`). Both kinds work inside `batch` with no extra code. Long-running commands that
+drive the transport themselves (`record_arrangement`, `resample_master`) stay special cases in
+`_process_command` and can't be batched.
 
 Then implement the method:
 ```python
@@ -220,6 +215,15 @@ def your_new_command(ctx: Context, param1: int, param2: str) -> str:
 ```
 
 If it's a modifying command, add it to the `is_modifying_command` list in the server as well.
+
+### Events
+
+`_attach_listeners` adds Live listeners (song, song.view, every track) that append to an event
+buffer; `get_events` returns what's newer than `since`, optionally waiting on a condition variable.
+Listeners can't be added inside a notification, so structure changes re-attach on the next tick,
+and every main-thread command re-syncs before replying, so tracks created through the script are
+watched by the time the caller hears back. To watch something new, add it in `_attach_listeners`
+or `_attach_track_listeners` with `self._listen(subject, prop, callback)`.
 
 ## Mixing — Track Volume & Panning
 

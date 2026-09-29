@@ -28,6 +28,8 @@ This fork adds significant capabilities beyond the original:
 - **Browser integration** — Browse and load instruments, effects, and presets by URI
 - **Transport controls** — Tempo, time signature, metronome, record mode
 - **Undo/redo** support
+- **Batch** — `batch` runs many commands in one round trip and one Live tick (10 commands: 0.4 s instead of 2–4 s), with `{"$ref": [i, "key"]}` to use an earlier result
+- **Events** — `get_events` reports what happened in Live since you last asked (clip launches by you or the user, transport, tempo, selection, mute/solo/arm, tracks added), with long-polling
 
 See [NEXT_STEPS.md](NEXT_STEPS.md) for the full feature list and roadmap.
 

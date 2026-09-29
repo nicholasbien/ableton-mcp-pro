@@ -155,5 +155,125 @@ fluidclaude plays on and every loop becomes a "call".
 `live(cmd, params)` sends one command over the port-9877 socket and returns its result, plus
 `tracks()`, `track_by_name(name)`, `clear_arrangement_clips(track)` and `set_param(track, device,
 name, value)`. The same protocol the MCP server speaks, for scripts and tests that don't want an
-MCP round trip (the resample and clip-tool tests were written against it). Every call costs
-0.4–1.5 s; keep it out of anything time-critical.
+MCP round trip (the resample and clip-tool tests were written against it). It keeps one
+connection open and reconnects once if Live restarted.
+
+Every call costs 0.2–1.5 s, most of it waiting for Live's next tick, so batch:
+
+```python
+from live_client import live, batch, ref, events
+
+# one round trip, one Live tick; ref(i, key) is result i's key
+idx = batch([("create_midi_track", {"index": -1}),
+             ("set_track_name", {"track_index": ref(0, "index"), "name": "Bass"}),
+             ("create_clip", {"track_index": ref(0, "index"), "clip_index": 0, "length": 4.0}),
+             ("add_notes_to_clip", {"track_index": ref(0, "index"), "clip_index": 0, "notes": notes})])[0]["index"]
+
+for ev in events():          # blocks; clip launches, transport, tempo, selection, mute/solo/arm...
+    print(ev["type"], ev)
+```
+
+`batch` raises on the first failing command (the earlier ones did run); `stop_on_error=False`
+runs them all and returns each `{status, result|message}`. Measured on Live 12.4: 10 reads 2.0 s
+one by one vs 0.4 s batched, 10 writes 4.0 s vs 0.4 s. `record_arrangement`, `resample_master`
+and `get_events` can't be batched.
+
+`events()` long-polls `get_events` on its own connection and yields dicts with `seq`, `type`,
+`time` (wall clock) and `beat` (song position when Live reported it). Types: `is_playing`,
+`tempo`, `record_mode`, `signature_numerator`/`_denominator`, `loop`, `metronome`,
+`arrangement_overdub` (all with `value`); `clip_fired` / `clip_playing` (`track_index`,
+`clip_index`: slot, -1 stopped, -2 playing the arrangement); `track_mute`/`_solo`/`_arm`/`_name`;
+`selected_track`, `selected_scene`; `tracks_changed`/`scenes_changed`/`return_tracks_changed`.
+Live keeps the last 1000; a `missed` event means you fell further behind than that. Don't time
+music from `beat` (it's read when the listener fires, and socket delivery adds 0.2 s+); follow
+MIDI clock with `live_midi.Clock` for that.
+
+`python tools/test_batch_events.py` checks both against a running Live, on scratch tracks it
+deletes afterwards.
+
+## live_midi.py — the fast path: MIDI in and out of Live
+
+For anything timed. Notes out and Live's MIDI clock in over the macOS IAC buses (any CoreMIDI
+port works), sub-millisecond instead of `live_client`'s 0.4–1.5 s per call. Use `live_client`
+to set the set up, `live_midi` to play into it and follow its transport.
+
+```bash
+pip install "ableton-mcp-pro[midi]"          # mido + python-rtmidi (or: uv pip install mido python-rtmidi)
+python tools/live_midi.py ports
+python tools/live_midi.py clock "Bus 1"      # bpm / beat / bar while Live sends clock
+python tools/live_midi.py note "Bus 2" 60 --vel 100 --dur 0.25 --ch 0
+python tools/live_midi.py panic "Bus 2"
+```
+
+```python
+from live_midi import open_out, Clock, play_pattern
+out = open_out("Bus 2")              # substring; Live's spelling "IAC Driver (Bus 2)" works too
+out.note(60, vel=100, dur=0.25)      # returns at once; the note-off is on a scheduler thread
+out.cc(74, 64); out.program(5); out.panic()
+clock = Clock("Bus 1")
+clock.bpm, clock.beat, clock.playing
+clock.next_beat(4.0)                 # block until the next bar line, then fire something
+p = play_pattern(out, clock, notes, loop_beats=4.0, quantize_to=4.0)   # add_notes_to_clip schema
+p.stop()
+```
+
+- **Clock**: in Live's MIDI preferences, turn Sync on for the output port (IAC Bus 1 in the jam
+  setup). `beat` counts quarter notes from the song start: Start → 0, Song Position Pointer +
+  Continue (what Live sends when you play from mid-song) → that position. It is interpolated
+  between ticks; `bpm` averages the last 2 beats of ticks. `wait_until(beat)` wakes on ticks
+  and sleeps the last stretch to the predicted time, so it lands between ticks (within ~0.1 ms
+  of a steady clock in the tests), not on the next tick 20 ms later.
+- **Units**: `Out.note(dur=)` is seconds; everything on `Clock` and `play_pattern` is beats.
+  Channels are 0–15 (0 = Live's "Ch. 1").
+- **`play_pattern`** waits for the transport, starts on the next `quantize_to` boundary, loops
+  every `loop_beats` (or `loops=` times), skips `mute` notes, and releases its notes on `stop()`
+  and, by default, when Live stops.
+- **Latency**: a note through an IAC bus or rtmidi virtual port arrives ~0.1 ms after `send`
+  (median, max ~0.3 ms, measured by `test_live_midi.py`). Live itself adds ~32 ms on tracks
+  that monitor input (see the README's timing gotchas), which this module doesn't cancel.
+
+`python tools/test_live_midi.py` tests the Clock with synthetic messages (no hardware), the
+scheduler and `play_pattern` against a fake port, then loops notes and clock through an IAC bus
+(the highest-numbered one, or `LIVE_MIDI_TEST_BUS`; it sends notes on channel 16 and a burst of
+clock, so pick a bus nothing listens to) and an rtmidi virtual port. Live need not be running.
+
+## als.py — read and edit .als files offline
+
+A Live Set is gzipped XML. `als.py` (standard library only) reads and edits it without Live
+running, for things the Live Object Model can't reach: relinking samples after a drive or
+project move, checking a set's tempo/tracks/devices before opening it, batch edits across sets.
+Understands the Live 10, 11 and 12 layouts (`MasterTrack` vs `MainTrack`, `ColorIndex` vs
+`Color`, `SceneNames` vs `Scenes`, Live 10's directory-element FileRefs vs 11+'s `Path`).
+
+```bash
+python tools/als.py summary SET.als [--json]      # version, tempo, time sig, tracks, devices,
+                                                  # clip counts, returns, main, scenes, locators
+python tools/als.py samples SET.als [--missing]   # every referenced sample, ok/MISSING
+python tools/als.py set-tempo SET.als 124 -o OUT.als
+python tools/als.py rename-track SET.als "2-Audio" "Vox" -o OUT.als    # index or name
+python tools/als.py set-color SET.als 0 12 -o OUT.als                  # palette 0-69
+python tools/als.py relink SET.als /Users/old/Samples/ /Volumes/ext/Samples/ -o OUT.als
+```
+
+As a module: `load(path)`, `save(tree, path)`, `summary(tree)`, `set_tempo`, `rename_track`,
+`set_track_color`, `list_samples`, `relink_samples`, `find_track`. Track indices match the MCP
+server (0+ regular, -1 main, -2/-3 returns A/B).
+
+- **Writes only where you tell it.** Edit commands require `-o` (it may equal the input to edit
+  in place). Saves go to a temp file and are renamed into place. Close the set in Live first,
+  or Live will overwrite your edit on its next save.
+- **Byte-identical round trips.** An unedited load/save reproduces Live's XML exactly (checked
+  on ~450 real sets, Live 10.1 through 12.4), so a diff of the decompressed XML shows only your
+  edit. Live 10 escapes `"` in attributes as `&quot;`, 11/12 use single quotes; the file's style
+  is kept.
+- **Tempo** lives in the main track mixer's `Tempo/Manual`, but Live also saves a one-point
+  arrangement envelope that the arrangement actually plays; `set-tempo` updates both. A set
+  with real tempo automation keeps its automation (`summary` shows `tempo (automated)`).
+- **Samples** are the `SampleRef` file references (Simpler/Sampler/Drum Rack pads, audio
+  clips). `exists` is true when the absolute path exists, or the set/project-relative path
+  resolves from the set's location (how Live finds samples after a project folder moves).
+  `relink` rewrites absolute paths by string prefix (end both prefixes with `/` to match
+  whole folders). For Live 10 sets it rewrites the search hint and file name; the binary alias
+  in `<Data>` is left as is, and Live falls back to the hint when the alias doesn't resolve.
+
+`python tools/test_als.py` runs the tests against tiny synthetic Live 10 and Live 12 sets.
