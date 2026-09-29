@@ -141,6 +141,9 @@ class AbletonConnection:
             # Set timeout based on command type
             if command_type == "record_arrangement":
                 timeout = 600.0  # 10 minutes for arrangement recording
+            elif command_type == "resample_master":
+                # blocks for the whole take; without `seconds` it records to the last clip's end
+                timeout = float(command["params"].get("seconds") or 1800.0) + 60.0
             elif command_type == "batch":
                 timeout = max(15.0, 0.5 * len(command["params"].get("commands", [])) + 5.0)
             elif command_type == "get_events":
@@ -1775,7 +1778,9 @@ def resample_master(ctx: Context, seconds: Optional[float] = None, name: str = "
     plays the arrangement from start_time with record mode on until the last clip ends (or
     `seconds`), then returns the recorded file's path. Blocks for the whole song. Live has no
     export command, so this is how an agent gets a mixdown out. Earlier bounce tracks are muted
-    first (listed in muted_earlier_bounces) so they don't play into the new take. Measure the
+    first (listed in muted_earlier_bounces) so they don't play into the new take, and the new
+    one is muted when it's done. A take that starts after bar 1 includes up to 2 bars of
+    pre-roll before start_time (recorded_from_beat / pre_roll_beats in the result). Measure the
     result with tools/mix_check.py (see the mix-check skill)."""
     try:
         params = {"name": name, "start_time": start_time}
