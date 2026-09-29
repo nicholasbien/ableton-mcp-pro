@@ -29,6 +29,12 @@ midi = [
     "mido",
     "python-rtmidi",
 ]
+analysis = [
+    "numpy",
+    "scipy",
+    "soundfile",
+    "pyloudnorm",
+]
 
 [project.scripts]
 ableton-mcp-pro = "MCP_Server.server:main"

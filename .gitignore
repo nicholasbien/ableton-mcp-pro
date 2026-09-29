@@ -17,7 +17,7 @@ uv.lock
 .env.*
 
 # Claude Code
-.claude/
+.claude/*
 !.claude/skills/
 .mcp.json
 transcripts/

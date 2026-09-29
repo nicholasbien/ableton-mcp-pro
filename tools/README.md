@@ -277,3 +277,21 @@ server (0+ regular, -1 main, -2/-3 returns A/B).
   in `<Data>` is left as is, and Live falls back to the hint when the alias doesn't resolve.
 
 `python tools/test_als.py` runs the tests against tiny synthetic Live 10 and Live 12 sets.
+
+## mix_check.py — measure a bounce against reference tracks
+
+```bash
+pip install "ableton-mcp-pro[analysis]"      # numpy, scipy, soundfile, pyloudnorm
+python tools/mix_check.py BOUNCE.aif --ref "Daphni - Cherry.mp3" --ref other.wav --bpm 136 --sections 16,16,8,32,8,32,16
+```
+
+For each file: integrated LUFS, true peak (4x oversampled), crest factor, clipped samples, energy
+in six bands (sub, bass, low-mid, mid, presence, air) relative to the total, and the L/R
+correlation below 150 Hz. With `--ref` it compares the loudest 30 s of each file (drop against
+drop) and lists gaps over 3 dB, worst first; `--sections` adds a row per section; `--json` for
+scripts. Bounce with the `resample_master` tool; the mix-check skill has the full loop and what
+each gap usually means. About 10 s for a 4-minute track and two references.
+
+`python tools/test_mix_check.py` checks it on synthetic audio (a 45 Hz sine is all sub and mono,
+uncorrelated noise isn't, a clipped sine is flagged, a dark mix is flagged against a bright one).
+

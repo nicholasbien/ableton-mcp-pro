@@ -1774,7 +1774,9 @@ def resample_master(ctx: Context, seconds: Optional[float] = None, name: str = "
     """Record the main mix to an audio file: creates an audio track on Resampling, arms only it,
     plays the arrangement from start_time with record mode on until the last clip ends (or
     `seconds`), then returns the recorded file's path. Blocks for the whole song. Live has no
-    export command, so this is how an agent gets a mixdown out."""
+    export command, so this is how an agent gets a mixdown out. Earlier bounce tracks are muted
+    first (listed in muted_earlier_bounces) so they don't play into the new take. Measure the
+    result with tools/mix_check.py (see the mix-check skill)."""
     try:
         params = {"name": name, "start_time": start_time}
         if seconds is not None: params["seconds"] = seconds
