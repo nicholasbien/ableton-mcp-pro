@@ -475,7 +475,7 @@ The cached `self._song = self.song()` reference becomes invalid when Ableton swa
 
 `set_song_time(time)` often doesn't land at the requested position on the first call. The Remote Script now retries up to 5 times with a tolerance of 0.5 beats. Still sometimes needs `set_back_to_arranger()` called first.
 
-While the transport is stopped, a seek lands a moment later (the value read back in the same tick is the old one), and `start_playing()` plays from the insert marker rather than `current_song_time`. So `set_song_time` followed by `start_playback` can start from bar 1. `play_arrangement` starts first and seeks while playing; `resample_master` waits for the seek to land and then calls `continue_playing()`, since starting early with record mode on would leave a sliver clip at the insert marker.
+While the transport is stopped, a seek lands a moment later (the value read back in the same tick is the old one), and `start_playing()` plays from the insert marker rather than `current_song_time`. So `set_song_time` followed by `start_playback` can start from bar 1. `play_arrangement` starts first and seeks while playing. `continue_playing()` called from the Remote Script does not start the transport at all. `resample_master` therefore records from bar 1 by stopping twice (which returns the marker to 0), turning record on, then playing; from later in the song it plays, seeks up to 2 bars before `start_time` while playing, and punches record on before the playhead gets there (so the take includes that pre-roll). Turning record on before a plain `start_playing()` would record a sliver at the insert marker instead.
 
 ### No Arrangement Clip Deletion
 

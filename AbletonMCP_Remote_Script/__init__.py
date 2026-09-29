@@ -2887,32 +2887,55 @@ class AbletonMCP(ControlSurface):
                     if tr.can_be_armed and tr.arm:          # record mode records over its clip instead of playing
                         tr.arm = False
                 track.arm = True
-            def locate():
+            # start_playing() plays from the insert marker, not current_song_time, and a seek made
+            # while stopped lands a moment later; continue_playing() from here didn't start the
+            # transport at all. What works: from bar 1, stop twice (the marker goes to 0), record
+            # on, play. Later in the song: play, seek a pre-roll ahead of start_time while playing
+            # (lands at once), then punch record on before the playhead reaches start_time.
+            pre_roll = 0.0 if start_time <= 0 else min(8.0, float(start_time))
+            rec_from = float(start_time) - pre_roll
+            pos = {"v": -1.0, "playing": False}
+            def read_pos():
+                pos["v"] = float(self._song.current_song_time); pos["playing"] = bool(self._song.is_playing)
+            def arrangement():
                 self._song.stop_all_clips()
                 self._song.back_to_arranger = False        # the arrangement plays (True = session overrides it)
-                self._song.current_song_time = float(start_time)
-            located = {"pos": -1.0}
-            def read_pos():
-                located["pos"] = float(self._song.current_song_time)
+            def stop():
+                self._song.stop_playing()
+            def play():
+                self._song.start_playing()
+            def seek():
+                self._song.current_song_time = rec_from
             def record_on():
                 self._song.record_mode = 1
-            def go():
-                # start_playing() would play from the insert marker, not from current_song_time
-                self._song.continue_playing()
-            # the same steps as separate socket calls work; one combined task did not start the transport
-            for step in (make_track, route_and_arm, locate):
+            def wait_for(ok, what):
+                for _ in range(30):
+                    do_on_main(read_pos)
+                    if ok():
+                        return
+                    time_module.sleep(0.1)
+                raise Exception("{0} (playhead at beat {1})".format(what, pos["v"]))
+            for step in (make_track, route_and_arm, arrangement):
                 do_on_main(step)
                 time_module.sleep(0.15)
-            for _ in range(20):                             # a seek while stopped lands a moment later
-                do_on_main(read_pos)
-                if abs(located["pos"] - float(start_time)) < 0.01:
-                    break
-                time_module.sleep(0.1)
+            if start_time <= 0:
+                do_on_main(stop); time_module.sleep(0.3)
+                do_on_main(stop)                            # a second stop returns to the start
+                wait_for(lambda: pos["v"] < 0.01, "could not return the playhead to the start")
+                do_on_main(record_on); time_module.sleep(0.15)
+                do_on_main(play)
+                wait_for(lambda: pos["playing"], "the transport did not start")
             else:
-                raise Exception("could not move the playhead to beat {0} (at {1})".format(start_time, located["pos"]))
-            for step in (record_on, go):
-                do_on_main(step)
-                time_module.sleep(0.15)
+                do_on_main(play)
+                wait_for(lambda: pos["playing"], "the transport did not start")
+                do_on_main(seek)
+                wait_for(lambda: rec_from - 0.01 <= pos["v"] < start_time,
+                         "could not move the playhead to beat {0}".format(rec_from))
+                do_on_main(record_on)
+                do_on_main(read_pos)
+                if pos["v"] >= start_time:
+                    raise Exception("record came on after beat {0}; try again".format(start_time))
+            seconds += pre_roll * 60.0 / tempo
             state = {"playing": True, "pos": 0.0}
             def read_state():
                 state["playing"] = bool(self._song.is_playing); state["pos"] = float(self._song.current_song_time)
@@ -2929,6 +2952,7 @@ class AbletonMCP(ControlSurface):
                 self._song.stop_playing()
                 self._song.record_mode = 0
                 holder["track"].arm = False
+                holder["track"].mute = True                 # left playing, the take doubles the mix
                 self._song.current_song_time = float(start_time)
             def read_clip():
                 clips = list(holder["track"].arrangement_clips)
@@ -2943,7 +2967,8 @@ class AbletonMCP(ControlSurface):
                     break
             return {"track_index": holder["index"], "track_name": name,
                     "file_path": out.get("file_path"), "length_beats": out.get("length_beats", 0.0),
-                    "seconds": round(seconds, 1), "stopped_at_beat": state["pos"], "stopped_early": stopped_early,
+                    "seconds": round(seconds, 1), "recorded_from_beat": rec_from, "pre_roll_beats": pre_roll,
+                    "stopped_at_beat": state["pos"], "stopped_early": stopped_early,
                     "muted_earlier_bounces": holder["muted"],
                     "note": "the transport stopped before the end (audio device change or a manual stop?)" if stopped_early else ""}
         except Exception as e:
