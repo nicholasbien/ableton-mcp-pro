@@ -123,7 +123,13 @@ class AbletonConnection:
             "set_track_monitoring", "get_track_routing",
             "set_track_input_routing", "set_track_output_routing", "set_metronome",
             "set_clip_envelope", "clear_clip_envelope",
-            "undo", "redo", "batch"
+            "undo", "redo", "batch",
+            "set_track_color", "set_clip_color", "set_scene_color",
+            "create_locator", "rename_locator", "delete_locator", "jump_to_locator",
+            "set_clip_groove", "set_groove_params", "add_warp_marker", "move_warp_marker",
+            "remove_warp_marker", "capture_midi", "duplicate_scene", "move_device",
+            "set_chain_mixer", "select_track", "select_scene", "select_clip", "focus_view",
+            "fold_track", "transpose_clip_notes", "humanize_clip", "unarm_all", "set_track_height"
         ]
         
         try:
@@ -146,6 +152,8 @@ class AbletonConnection:
                 timeout = float(command["params"].get("seconds") or 1800.0) + 60.0
             elif command_type == "batch":
                 timeout = max(15.0, 0.5 * len(command["params"].get("commands", [])) + 5.0)
+            elif command_type == "search_browser":
+                timeout = 20.0  # the Remote Script stops searching after 6 s
             elif command_type == "get_events":
                 timeout = float(command["params"].get("timeout", 0) or 0) + 10.0
             elif is_modifying_command:
@@ -526,23 +534,26 @@ def add_notes_to_clip(
         return f"Error adding notes to clip: {str(e)}"
 
 @mcp.tool()
-def set_clip_name(ctx: Context, track_index: int, clip_index: int, name: str) -> str:
+def set_clip_name(ctx: Context, track_index: int, clip_index: int, name: str, arrangement_clip_index: int = None) -> str:
     """
-    Set the name of a clip.
+    Set the name of a clip: a session clip, or an arrangement clip when arrangement_clip_index is set.
     
     Parameters:
     - track_index: The index of the track containing the clip
-    - clip_index: The index of the clip slot containing the clip
+    - clip_index: The index of the clip slot containing the clip (ignored when arrangement_clip_index is set; pass 0)
     - name: The new name for the clip
+    - arrangement_clip_index: Index into the track's arrangement clips (see get_arrangement_clips)
     """
     try:
         ableton = get_ableton_connection()
         result = ableton.send_command("set_clip_name", {
             "track_index": track_index,
             "clip_index": clip_index,
-            "name": name
+            "name": name,
+            "arrangement_clip_index": arrangement_clip_index
         })
-        return f"Renamed clip at track {track_index}, slot {clip_index} to '{name}'"
+        where = f"arrangement clip {arrangement_clip_index}" if arrangement_clip_index is not None else f"slot {clip_index}"
+        return f"Renamed clip at track {track_index}, {where} to '{result.get('name', name)}'"
     except Exception as e:
         logger.error(f"Error setting clip name: {str(e)}")
         return f"Error setting clip name: {str(e)}"
@@ -1759,6 +1770,256 @@ def create_arrangement_audio_clips_batch(ctx: Context, track_index: int, file_pa
     except Exception as e:
         logger.error(f"Error batch-placing arrangement audio clips: {str(e)}")
         return f"Error batch-placing arrangement audio clips: {str(e)}"
+
+@mcp.tool()
+def set_track_color(ctx: Context, track_index: int, color: str = None, color_index: int = None) -> str:
+    """Color a track (also colors its new clips' default). track_index -2/-3 = return tracks.
+    Give either color, an RGB hex like '#FF3636' (Live snaps it to the nearest of its 70 palette colors),
+    or color_index, a palette slot 0-69. Use batch to color many tracks in one go."""
+    try:
+        result = get_ableton_connection().send_command("set_track_color", {
+            "track_index": track_index, "color": color, "color_index": color_index})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error setting track color: {str(e)}")
+        return f"Error setting track color: {str(e)}"
+
+@mcp.tool()
+def set_clip_color(ctx: Context, track_index: int, clip_index: int = 0, color: str = None, color_index: int = None,
+                   arrangement_clip_index: int = None) -> str:
+    """Color a clip: a session slot (clip_index), or an arrangement clip (arrangement_clip_index, see
+    get_arrangement_clips). Give either color, an RGB hex like '#FF3636' (Live snaps it to the nearest of its
+    70 palette colors), or color_index, a palette slot 0-69."""
+    try:
+        result = get_ableton_connection().send_command("set_clip_color", {
+            "track_index": track_index, "clip_index": clip_index, "color": color, "color_index": color_index,
+            "arrangement_clip_index": arrangement_clip_index})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error setting clip color: {str(e)}")
+        return f"Error setting clip color: {str(e)}"
+
+@mcp.tool()
+def set_scene_color(ctx: Context, scene_index: int, color: str = None, color_index: int = None) -> str:
+    """Color a scene. Give either color, an RGB hex like '#FF3636' (Live snaps it to the nearest of its
+    70 palette colors), or color_index, a palette slot 0-69."""
+    try:
+        result = get_ableton_connection().send_command("set_scene_color", {
+            "scene_index": scene_index, "color": color, "color_index": color_index})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error setting scene color: {str(e)}")
+        return f"Error setting scene color: {str(e)}"
+
+
+# ---- VyK additions: locators, grooves, warp markers, racks, browser search, view, MIDI helpers ----
+
+def _send_json(command: str, params: dict, label: str) -> str:
+    try:
+        result = get_ableton_connection().send_command(command, {k: v for k, v in params.items() if v is not None})
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        logger.error(f"Error {label}: {str(e)}")
+        return f"Error {label}: {str(e)}"
+
+@mcp.tool()
+def get_locators(ctx: Context) -> str:
+    """List the arrangement locators (markers), sorted by time: index, name, time in beats and bar number."""
+    return _send_json("get_locators", {}, "getting locators")
+
+@mcp.tool()
+def create_locator(ctx: Context, time: float, name: str = None) -> str:
+    """Add a named locator (marker) in the arrangement at `time` in beats (bar N starts at (N-1)*4 in 4/4).
+    Playback must be stopped (Live places locators at the playhead, which stays there). Use times on the bar
+    grid: Live may snap the locator. A locator already at that time is renamed."""
+    return _send_json("create_locator", {"time": time, "name": name}, "creating locator")
+
+@mcp.tool()
+def rename_locator(ctx: Context, locator_index: int, name: str) -> str:
+    """Rename a locator (index from get_locators)."""
+    return _send_json("rename_locator", {"locator_index": locator_index, "name": name}, "renaming locator")
+
+@mcp.tool()
+def delete_locator(ctx: Context, locator_index: int) -> str:
+    """Delete a locator (index from get_locators). Playback must be stopped."""
+    return _send_json("delete_locator", {"locator_index": locator_index}, "deleting locator")
+
+@mcp.tool()
+def jump_to_locator(ctx: Context, locator_index: int) -> str:
+    """Move the playhead to a locator."""
+    return _send_json("jump_to_locator", {"locator_index": locator_index}, "jumping to locator")
+
+@mcp.tool()
+def get_groove_pool(ctx: Context) -> str:
+    """List the grooves in the set's Groove Pool (timing, random, velocity, quantization amounts) and the
+    global groove amount. Grooves get into the pool when the user drags one from the browser's Grooves folder."""
+    return _send_json("get_groove_pool", {}, "getting groove pool")
+
+@mcp.tool()
+def set_clip_groove(ctx: Context, track_index: int, groove_index: int, clip_index: int = 0,
+                    arrangement_clip_index: int = None) -> str:
+    """Apply a Groove Pool groove to a clip (session slot, or arrangement clip via arrangement_clip_index).
+    groove_index -1 removes the groove."""
+    return _send_json("set_clip_groove", {"track_index": track_index, "clip_index": clip_index,
+                                          "groove_index": groove_index,
+                                          "arrangement_clip_index": arrangement_clip_index}, "setting clip groove")
+
+@mcp.tool()
+def set_groove_params(ctx: Context, groove_index: int = -1, timing_amount: float = None, random_amount: float = None,
+                      velocity_amount: float = None, quantization_amount: float = None, base: int = None,
+                      global_amount: float = None) -> str:
+    """Edit a groove's amounts (0.0-1.0; velocity_amount -1.0 to 1.0) and its base grid
+    (0 = 1/4, 1 = 1/8, 2 = 1/8T, 3 = 1/16, 4 = 1/16T, 5 = 1/32), and/or the set's global groove amount
+    (global_amount, 1.0 = 100%). groove_index -1 = only global_amount. Read get_groove_pool first and after."""
+    return _send_json("set_groove_params", {"groove_index": groove_index, "timing_amount": timing_amount,
+                                            "random_amount": random_amount, "velocity_amount": velocity_amount,
+                                            "quantization_amount": quantization_amount, "base": base,
+                                            "global_amount": global_amount}, "setting groove params")
+
+@mcp.tool()
+def get_warp_markers(ctx: Context, track_index: int, clip_index: int = 0, arrangement_clip_index: int = None) -> str:
+    """List an audio clip's warp markers (beat_time in clip beats, sample_time in seconds of the file)."""
+    return _send_json("get_warp_markers", {"track_index": track_index, "clip_index": clip_index,
+                                           "arrangement_clip_index": arrangement_clip_index}, "getting warp markers")
+
+@mcp.tool()
+def add_warp_marker(ctx: Context, track_index: int, beat_time: float, sample_time: float = None, clip_index: int = 0,
+                    arrangement_clip_index: int = None) -> str:
+    """Add a warp marker to an audio clip at beat_time. Without sample_time it anchors the audio where it
+    already is; with sample_time (seconds into the file) that moment of the audio is pinned to beat_time,
+    to line a vocal or a hit up with the grid. Warping must be on."""
+    return _send_json("add_warp_marker", {"track_index": track_index, "clip_index": clip_index,
+                                          "beat_time": beat_time, "sample_time": sample_time,
+                                          "arrangement_clip_index": arrangement_clip_index}, "adding warp marker")
+
+@mcp.tool()
+def move_warp_marker(ctx: Context, track_index: int, beat_time: float, beat_time_distance: float, clip_index: int = 0,
+                     arrangement_clip_index: int = None) -> str:
+    """Move the warp marker at beat_time by beat_time_distance beats (stretches the audio around it)."""
+    return _send_json("move_warp_marker", {"track_index": track_index, "clip_index": clip_index,
+                                           "beat_time": beat_time, "beat_time_distance": beat_time_distance,
+                                           "arrangement_clip_index": arrangement_clip_index}, "moving warp marker")
+
+@mcp.tool()
+def remove_warp_marker(ctx: Context, track_index: int, beat_time: float, clip_index: int = 0,
+                       arrangement_clip_index: int = None) -> str:
+    """Remove the warp marker at beat_time from an audio clip."""
+    return _send_json("remove_warp_marker", {"track_index": track_index, "clip_index": clip_index,
+                                             "beat_time": beat_time,
+                                             "arrangement_clip_index": arrangement_clip_index}, "removing warp marker")
+
+@mcp.tool()
+def capture_midi(ctx: Context, destination: int = 0) -> str:
+    """Capture MIDI: turn what the user just played on an armed or monitored MIDI track into a clip, even
+    without recording. destination 0 = auto, 1 = Session, 2 = Arrangement."""
+    return _send_json("capture_midi", {"destination": destination}, "capturing MIDI")
+
+@mcp.tool()
+def duplicate_scene(ctx: Context, scene_index: int) -> str:
+    """Duplicate a scene with its clips; the copy is inserted right below it."""
+    return _send_json("duplicate_scene", {"scene_index": scene_index}, "duplicating scene")
+
+@mcp.tool()
+def move_device(ctx: Context, track_index: int, device_index: int, new_index: int,
+                target_track_index: int = None) -> str:
+    """Move a device so it sits at position new_index in the chain (0 = first), or onto another track with
+    target_track_index. Track index -1 = master, -2/-3 = returns. The result lists the new device order."""
+    return _send_json("move_device", {"track_index": track_index, "device_index": device_index,
+                                      "new_index": new_index, "target_track_index": target_track_index},
+                      "moving device")
+
+@mcp.tool()
+def get_rack_chains(ctx: Context, track_index: int, device_index: int) -> str:
+    """List the chains of a rack (Instrument, Audio Effect or Drum Rack) with their mute/solo/volume and devices,
+    plus the rack's macros (parameter_index usable with set_device_parameter)."""
+    return _send_json("get_rack_chains", {"track_index": track_index, "device_index": device_index},
+                      "getting rack chains")
+
+@mcp.tool()
+def set_chain_mixer(ctx: Context, track_index: int, device_index: int, chain_index: int, mute: bool = None,
+                    solo: bool = None, volume: float = None, panning: float = None) -> str:
+    """Mute/solo a rack chain, or set its volume (0.0-1.0, 0.85 is about 0 dB) or panning (-1.0 to 1.0)."""
+    return _send_json("set_chain_mixer", {"track_index": track_index, "device_index": device_index,
+                                          "chain_index": chain_index, "mute": mute, "solo": solo,
+                                          "volume": volume, "panning": panning}, "setting chain mixer")
+
+@mcp.tool()
+def search_browser(ctx: Context, query: str, category: str = "all", max_results: int = 30) -> str:
+    """Search Ableton's browser by name (every word must appear, case-insensitive). category: all, sounds, drums,
+    instruments, audio_effects, midi_effects, samples, clips, grooves, user_library, current_project, packs,
+    plugins, max_for_live or user_folders. Returns name, path and uri; load results with load_instrument_or_effect
+    or, for samples, create_arrangement_audio_clip. Narrow the category to search big libraries faster."""
+    return _send_json("search_browser", {"query": query, "category": category, "max_results": max_results},
+                      "searching browser")
+
+@mcp.tool()
+def get_view_state(ctx: Context) -> str:
+    """What the user is looking at: Session or Arrangement, selected track and scene, clip in Clip View."""
+    return _send_json("get_view_state", {}, "getting view state")
+
+@mcp.tool()
+def select_track(ctx: Context, track_index: int) -> str:
+    """Select a track in Live (to show the user where something is). -1 = master, -2/-3 = returns."""
+    return _send_json("select_track", {"track_index": track_index}, "selecting track")
+
+@mcp.tool()
+def select_scene(ctx: Context, scene_index: int) -> str:
+    """Select a scene in Live."""
+    return _send_json("select_scene", {"scene_index": scene_index}, "selecting scene")
+
+@mcp.tool()
+def select_clip(ctx: Context, track_index: int, clip_index: int = 0, arrangement_clip_index: int = None) -> str:
+    """Select a clip and open it in Clip View (session slot, or arrangement clip via arrangement_clip_index)."""
+    return _send_json("select_clip", {"track_index": track_index, "clip_index": clip_index,
+                                      "arrangement_clip_index": arrangement_clip_index}, "selecting clip")
+
+@mcp.tool()
+def focus_view(ctx: Context, view: str) -> str:
+    """Show a part of Live's window: session, arrangement, clip, devices or browser."""
+    return _send_json("focus_view", {"view": view}, "focusing view")
+
+@mcp.tool()
+def fold_track(ctx: Context, track_index: int, fold: bool = True) -> str:
+    """Fold (collapse) or unfold a group track. Live's API cannot create groups: the user groups with Cmd+G."""
+    return _send_json("fold_track", {"track_index": track_index, "fold": fold}, "folding track")
+
+@mcp.tool()
+def transpose_clip_notes(ctx: Context, track_index: int, semitones: int, clip_index: int = 0,
+                         arrangement_clip_index: int = None, from_pitch: int = 0, pitch_span: int = 128,
+                         from_time: float = 0.0, time_span: float = -1.0) -> str:
+    """Transpose a MIDI clip's notes by `semitones` (session slot or arrangement clip). Optionally only the
+    notes in a pitch window (from_pitch, pitch_span) and/or time window (from_time, time_span in beats; -1 = to the end)."""
+    return _send_json("transpose_clip_notes", {"track_index": track_index, "clip_index": clip_index,
+                                               "semitones": semitones, "from_pitch": from_pitch,
+                                               "pitch_span": pitch_span, "from_time": from_time,
+                                               "time_span": time_span,
+                                               "arrangement_clip_index": arrangement_clip_index},
+                      "transposing notes")
+
+@mcp.tool()
+def humanize_clip(ctx: Context, track_index: int, timing: float = 0.01, velocity: int = 8, clip_index: int = 0,
+                  arrangement_clip_index: int = None, seed: int = None, from_time: float = 0.0,
+                  time_span: float = -1.0) -> str:
+    """Humanize a MIDI clip: shift each note start randomly by up to +/- timing beats (0.01 beat is about 5 ms
+    at 120 BPM) and each velocity by up to +/- velocity. seed makes it repeatable. Undo reverts it."""
+    return _send_json("humanize_clip", {"track_index": track_index, "clip_index": clip_index, "timing": timing,
+                                        "velocity": velocity, "seed": seed, "from_time": from_time,
+                                        "time_span": time_span, "arrangement_clip_index": arrangement_clip_index},
+                      "humanizing clip")
+
+@mcp.tool()
+def set_track_height(ctx: Context, track_index: int = 0, steps: int = 0, collapsed: bool = None,
+                     all_tracks: bool = False) -> str:
+    """Arrangement track height. collapsed True/False collapses or expands a track (its smallest height).
+    steps > 0 makes it taller, < 0 shorter, one zoom step each (Live's API has no pixel height); the track gets
+    selected, because Live zooms the highlighted track. all_tracks=True zooms every track instead."""
+    return _send_json("set_track_height", {"track_index": track_index, "steps": steps, "collapsed": collapsed,
+                                           "all_tracks": all_tracks}, "setting track height")
+
+@mcp.tool()
+def unarm_all(ctx: Context) -> str:
+    """Disarm every armed track (before resampling or recording the arrangement, armed tracks record over clips)."""
+    return _send_json("unarm_all", {}, "unarming tracks")
 
 @mcp.tool()
 def get_clip_info(ctx: Context, track_index: int, clip_index: int = 0, arrangement_clip_index: int = None) -> str:

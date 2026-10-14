@@ -37,6 +37,12 @@ MODIFYING_COMMANDS = frozenset([
     "duplicate_clip_loop", "duplicate_region", "set_device_enabled", "create_return_track",
     "delete_return_track", "stop_all_clips", "set_clip_gain", "set_clip_pitch",
     "set_clip_warping", "set_clip_warp_mode",
+    "set_track_color", "set_clip_color", "set_scene_color",
+    "create_locator", "rename_locator", "delete_locator", "jump_to_locator",
+    "set_clip_groove", "set_groove_params", "add_warp_marker", "move_warp_marker",
+    "remove_warp_marker", "capture_midi", "duplicate_scene", "move_device",
+    "set_chain_mixer", "select_track", "select_scene", "select_clip", "focus_view",
+    "fold_track", "transpose_clip_notes", "humanize_clip", "unarm_all", "set_track_height",
 ])
 
 # Read-only commands; they run directly on the socket thread
@@ -47,6 +53,8 @@ READ_COMMANDS = frozenset([
     "get_clip_envelope", "get_clip_info", "get_drum_pads",
     "get_browser_item", "get_browser_categories", "get_browser_items",
     "get_browser_tree", "get_browser_items_at_path",
+    "get_locators", "get_groove_pool", "get_warp_markers", "get_rack_chains",
+    "get_view_state",
 ])
 
 def create_instance(c_instance):
@@ -277,6 +285,10 @@ class AbletonMCP(ControlSurface):
                 response["result"] = self._record_arrangement(sections, start_time)
             elif command_type == "batch":
                 response["result"] = self._batch(params.get("commands", []), params.get("stop_on_error", True))
+            elif command_type == "search_browser":
+                # Long walk of the browser: socket thread, not batchable (it would freeze Live's UI)
+                response["result"] = self._search_browser(params.get("query", ""), params.get("category", "all"),
+                                                          int(params.get("max_results", 30) or 30))
             elif command_type == "get_events":
                 response["result"] = self._get_events(params.get("since", 0), params.get("timeout", 0.0),
                                                       params.get("limit", 500))
@@ -355,6 +367,17 @@ class AbletonMCP(ControlSurface):
         elif command_type == "get_browser_items_at_path":
             path = params.get("path", "")
             return self.get_browser_items_at_path(path)
+        elif command_type == "get_locators":
+            return self._get_locators()
+        elif command_type == "get_groove_pool":
+            return self._get_groove_pool()
+        elif command_type == "get_warp_markers":
+            return self._get_warp_markers(params.get("track_index", 0), params.get("clip_index", 0),
+                                          aci=params.get("arrangement_clip_index"))
+        elif command_type == "get_rack_chains":
+            return self._get_rack_chains(params.get("track_index", 0), params.get("device_index", 0))
+        elif command_type == "get_view_state":
+            return self._get_view_state()
         raise ValueError("Unknown command: " + command_type)
 
     def _run_modifying(self, command_type, params):
@@ -414,7 +437,7 @@ class AbletonMCP(ControlSurface):
             track_index = params.get("track_index", 0)
             clip_index = params.get("clip_index", 0)
             name = params.get("name", "")
-            result = self._set_clip_name(track_index, clip_index, name)
+            result = self._set_clip_name(track_index, clip_index, name, aci=params.get("arrangement_clip_index"))
         elif command_type == "set_tempo":
             tempo = params.get("tempo", 120.0)
             result = self._set_tempo(tempo)
@@ -594,6 +617,77 @@ class AbletonMCP(ControlSurface):
             result = self._set_clip_warping(params.get("track_index", 0), params.get("clip_index", 0), params.get("warping", True), aci=params.get("arrangement_clip_index"))
         elif command_type == "set_clip_warp_mode":
             result = self._set_clip_warp_mode(params.get("track_index", 0), params.get("clip_index", 0), params.get("warp_mode", 0), aci=params.get("arrangement_clip_index"))
+        elif command_type == "set_track_color":
+            result = self._set_track_color(params.get("track_index", 0), params.get("color"), params.get("color_index"))
+        elif command_type == "set_clip_color":
+            result = self._set_clip_color(params.get("track_index", 0), params.get("clip_index", 0),
+                                          params.get("color"), params.get("color_index"), aci=params.get("arrangement_clip_index"))
+        elif command_type == "set_scene_color":
+            result = self._set_scene_color(params.get("scene_index", 0), params.get("color"), params.get("color_index"))
+        elif command_type == "create_locator":
+            result = self._create_locator(params.get("time", 0.0), params.get("name"))
+        elif command_type == "rename_locator":
+            result = self._rename_locator(params.get("locator_index", 0), params.get("name", ""))
+        elif command_type == "delete_locator":
+            result = self._delete_locator(params.get("locator_index", 0))
+        elif command_type == "jump_to_locator":
+            result = self._jump_to_locator(params.get("locator_index", 0))
+        elif command_type == "set_clip_groove":
+            result = self._set_clip_groove(params.get("track_index", 0), params.get("clip_index", 0),
+                                           params.get("groove_index", -1), aci=params.get("arrangement_clip_index"))
+        elif command_type == "set_groove_params":
+            result = self._set_groove_params(params.get("groove_index"), params.get("timing_amount"),
+                                             params.get("random_amount"), params.get("velocity_amount"),
+                                             params.get("quantization_amount"), params.get("base"),
+                                             params.get("global_amount"))
+        elif command_type == "add_warp_marker":
+            result = self._add_warp_marker(params.get("track_index", 0), params.get("clip_index", 0),
+                                           params.get("beat_time", 0.0), params.get("sample_time"),
+                                           aci=params.get("arrangement_clip_index"))
+        elif command_type == "move_warp_marker":
+            result = self._move_warp_marker(params.get("track_index", 0), params.get("clip_index", 0),
+                                            params.get("beat_time", 0.0), params.get("beat_time_distance", 0.0),
+                                            aci=params.get("arrangement_clip_index"))
+        elif command_type == "remove_warp_marker":
+            result = self._remove_warp_marker(params.get("track_index", 0), params.get("clip_index", 0),
+                                              params.get("beat_time", 0.0), aci=params.get("arrangement_clip_index"))
+        elif command_type == "capture_midi":
+            result = self._capture_midi(params.get("destination", 0))
+        elif command_type == "duplicate_scene":
+            result = self._duplicate_scene(params.get("scene_index", 0))
+        elif command_type == "move_device":
+            result = self._move_device(params.get("track_index", 0), params.get("device_index", 0),
+                                       params.get("new_index", 0), params.get("target_track_index"))
+        elif command_type == "set_chain_mixer":
+            result = self._set_chain_mixer(params.get("track_index", 0), params.get("device_index", 0),
+                                           params.get("chain_index", 0), params.get("mute"), params.get("solo"),
+                                           params.get("volume"), params.get("panning"))
+        elif command_type == "select_track":
+            result = self._select_track(params.get("track_index", 0))
+        elif command_type == "select_scene":
+            result = self._select_scene(params.get("scene_index", 0))
+        elif command_type == "select_clip":
+            result = self._select_clip(params.get("track_index", 0), params.get("clip_index", 0),
+                                       aci=params.get("arrangement_clip_index"))
+        elif command_type == "focus_view":
+            result = self._focus_view(params.get("view", "Arranger"))
+        elif command_type == "fold_track":
+            result = self._fold_track(params.get("track_index", 0), params.get("fold", True))
+        elif command_type == "transpose_clip_notes":
+            result = self._transpose_clip_notes(params.get("track_index", 0), params.get("clip_index", 0),
+                                                params.get("semitones", 0), params.get("from_pitch", 0),
+                                                params.get("pitch_span", 128), params.get("from_time", 0.0),
+                                                params.get("time_span", -1.0), aci=params.get("arrangement_clip_index"))
+        elif command_type == "humanize_clip":
+            result = self._humanize_clip(params.get("track_index", 0), params.get("clip_index", 0),
+                                         params.get("timing", 0.0), params.get("velocity", 0), params.get("seed"),
+                                         params.get("from_time", 0.0), params.get("time_span", -1.0),
+                                         aci=params.get("arrangement_clip_index"))
+        elif command_type == "unarm_all":
+            result = self._unarm_all()
+        elif command_type == "set_track_height":
+            result = self._set_track_height(params.get("track_index", 0), params.get("steps", 0),
+                                            params.get("collapsed"), params.get("all_tracks", False))
         else:
             raise ValueError("Unknown command: " + command_type)
         return result
@@ -874,12 +968,37 @@ class AbletonMCP(ControlSurface):
                 "signature_denominator": self._song.signature_denominator,
                 "track_count": len(self._song.tracks),
                 "return_track_count": len(self._song.return_tracks),
+                "scene_count": len(self._song.scenes),
                 "master_track": {
                     "name": "Master",
                     "volume": self._song.master_track.mixer_device.volume.value,
                     "panning": self._song.master_track.mixer_device.panning.value
                 }
             }
+            # One call gives Claude the whole layout instead of one get_track_info per track
+            tracks = []
+            for i, track in enumerate(self._song.tracks):
+                entry = {"index": i, "name": track.name, "color_index": getattr(track, "color_index", None),
+                         "is_midi_track": track.has_midi_input, "mute": track.mute}
+                if getattr(track, "is_foldable", False):
+                    entry["is_group"] = True
+                if getattr(track, "is_grouped", False) and getattr(track, "group_track", None) is not None:
+                    entry["group"] = track.group_track.name
+                tracks.append(entry)
+            result["tracks"] = tracks
+            result["return_tracks"] = [{"index": -2 - i, "name": t.name}
+                                       for i, t in enumerate(self._song.return_tracks)]
+            try:
+                result["locator_count"] = len(self._song.cue_points)
+                result["groove_count"] = len(self._song.groove_pool.grooves)
+            except Exception:
+                pass
+            try:
+                app = self.application()
+                result["cpu_average"] = getattr(app, "average_process_usage", None)
+                result["cpu_peak"] = getattr(app, "peak_process_usage", None)
+            except Exception:
+                pass
             return result
         except Exception as e:
             self.log_message("Error getting session info: " + str(e))
@@ -888,14 +1007,11 @@ class AbletonMCP(ControlSurface):
     def _get_track_info(self, track_index):
         """Get information about a track"""
         try:
-            if track_index < 0 or track_index >= len(self._song.tracks):
-                raise IndexError("Track index out of range")
-            
-            track = self._song.tracks[track_index]
-            
-            # Get clip slots
+            track = self._get_track(track_index)
+
+            # Get clip slots (master and return tracks have none)
             clip_slots = []
-            for slot_index, slot in enumerate(track.clip_slots):
+            for slot_index, slot in enumerate(getattr(track, "clip_slots", []) or []):
                 clip_info = None
                 if slot.has_clip:
                     clip = slot.clip
@@ -922,20 +1038,35 @@ class AbletonMCP(ControlSurface):
                     "type": self._get_device_type(device)
                 })
             
+            can_arm = getattr(track, "can_be_armed", False)
+            volume = track.mixer_device.volume
             result = {
                 "index": track_index,
                 "name": track.name,
-                "is_audio_track": track.has_audio_input,
-                "is_midi_track": track.has_midi_input,
-                "mute": track.mute,
-                "solo": track.solo,
-                "arm": track.arm,
-                "volume": track.mixer_device.volume.value,
+                "color_index": getattr(track, "color_index", None),
+                "is_audio_track": getattr(track, "has_audio_input", False),
+                "is_midi_track": getattr(track, "has_midi_input", False),
+                "mute": getattr(track, "mute", None) if track_index != -1 else None,
+                "solo": getattr(track, "solo", None) if track_index != -1 else None,
+                "arm": track.arm if can_arm else False,
+                "volume": volume.value,
+                "volume_display": volume.str_for_value(volume.value),
                 "panning": track.mixer_device.panning.value,
+                "sends": [{"index": i, "value": s.value, "display": s.str_for_value(s.value)}
+                          for i, s in enumerate(track.mixer_device.sends)],
                 "output_meter_level": getattr(track, "output_meter_level", None),   # 0-1, live signal at the track output
                 "clip_slots": clip_slots,
                 "devices": devices
             }
+            try:
+                result["collapsed"] = bool(track.view.is_collapsed)
+            except Exception:
+                pass
+            if getattr(track, "is_foldable", False):
+                result["is_group"] = True
+                result["folded"] = bool(track.fold_state)
+            if getattr(track, "is_grouped", False) and getattr(track, "group_track", None) is not None:
+                result["group"] = track.group_track.name
             return result
         except Exception as e:
             self.log_message("Error getting track info: " + str(e))
@@ -1341,6 +1472,7 @@ class AbletonMCP(ControlSurface):
                         "length": clip.length,
                         "is_midi_clip": clip.is_midi_clip if hasattr(clip, 'is_midi_clip') else False,
                         "is_audio_clip": is_audio,
+                        "color_index": getattr(clip, "color_index", None),
                     }
                     if is_audio and hasattr(clip, 'file_path'):
                         clip_info["file_path"] = clip.file_path
@@ -2307,23 +2439,10 @@ class AbletonMCP(ControlSurface):
             self.log_message("Error adding notes to clip: " + str(e))
             raise
     
-    def _set_clip_name(self, track_index, clip_index, name):
-        """Set the name of a clip"""
+    def _set_clip_name(self, track_index, clip_index, name, aci=None):
+        """Set the name of a clip: session slot, or an arrangement clip when aci is given"""
         try:
-            if track_index < 0 or track_index >= len(self._song.tracks):
-                raise IndexError("Track index out of range")
-            
-            track = self._song.tracks[track_index]
-            
-            if clip_index < 0 or clip_index >= len(track.clip_slots):
-                raise IndexError("Clip index out of range")
-            
-            clip_slot = track.clip_slots[clip_index]
-            
-            if not clip_slot.has_clip:
-                raise Exception("No clip in slot")
-            
-            clip = clip_slot.clip
+            clip = self._session_clip(track_index, clip_index, arrangement_clip_index=aci)
             clip.name = name
             
             result = {
@@ -2793,6 +2912,666 @@ class AbletonMCP(ControlSurface):
             return {"warp_mode": clip.warp_mode}
         except Exception as e:
             self.log_message("Error setting clip warp mode: " + str(e))
+            raise
+
+    # ---- colors (VyK local patch) ----
+
+    def _apply_color(self, obj, color=None, color_index=None):
+        """Set obj's color from a palette slot (color_index 0-69) or an RGB value
+        ('#RRGGBB' or an int; Live snaps it to the nearest palette color)."""
+        if color_index is not None:
+            color_index = int(color_index)
+            if color_index < 0 or color_index > 69:
+                raise ValueError("color_index must be 0-69 (Live's color palette)")
+            obj.color_index = color_index
+        elif color is not None:
+            if isinstance(color, str):
+                text = color.strip().lstrip("#")
+                if text.lower().startswith("0x"):
+                    text = text[2:]
+                if len(text) != 6:
+                    raise ValueError("color must look like '#RRGGBB'")
+                value = int(text, 16)
+            else:
+                value = int(color)
+            obj.color = value
+        else:
+            raise ValueError("Give color ('#RRGGBB') or color_index (0-69)")
+        return {"color_index": obj.color_index, "color": "#%06X" % (int(obj.color) & 0xFFFFFF)}
+
+    def _set_track_color(self, track_index, color=None, color_index=None):
+        try:
+            track = self._get_track(track_index)
+            result = self._apply_color(track, color, color_index)
+            result["track_index"] = track_index
+            result["name"] = track.name
+            return result
+        except Exception as e:
+            self.log_message("Error setting track color: " + str(e))
+            raise
+
+    def _set_clip_color(self, track_index, clip_index, color=None, color_index=None, aci=None):
+        try:
+            clip = self._session_clip(track_index, clip_index, arrangement_clip_index=aci)
+            result = self._apply_color(clip, color, color_index)
+            result["name"] = clip.name
+            return result
+        except Exception as e:
+            self.log_message("Error setting clip color: " + str(e))
+            raise
+
+    def _set_scene_color(self, scene_index, color=None, color_index=None):
+        try:
+            if scene_index < 0 or scene_index >= len(self._song.scenes):
+                raise IndexError("Scene index out of range")
+            scene = self._song.scenes[scene_index]
+            result = self._apply_color(scene, color, color_index)
+            result["scene_index"] = scene_index
+            result["name"] = scene.name
+            return result
+        except Exception as e:
+            self.log_message("Error setting scene color: " + str(e))
+            raise
+
+    # ---- VyK additions: locators, grooves, warp markers, racks, browser search, view, MIDI helpers ----
+
+    def _beats_per_bar(self):
+        return self._song.signature_numerator * 4.0 / self._song.signature_denominator
+
+    def _locator_info(self, index, cue):
+        return {"index": index, "name": cue.name, "time": cue.time,
+                "bar": int(cue.time // self._beats_per_bar()) + 1}
+
+    def _sorted_cues(self):
+        return sorted(self._song.cue_points, key=lambda c: c.time)
+
+    def _get_locators(self):
+        """Arrangement locators (cue points), sorted by time; the index is the position in that order."""
+        try:
+            cues = self._sorted_cues()
+            return {"locators": [self._locator_info(i, c) for i, c in enumerate(cues)],
+                    "count": len(cues), "beats_per_bar": self._beats_per_bar()}
+        except Exception as e:
+            self.log_message("Error getting locators: " + str(e))
+            raise
+
+    def _get_cue(self, locator_index):
+        cues = self._sorted_cues()
+        if locator_index < 0 or locator_index >= len(cues):
+            raise IndexError("Locator index out of range (0-{0})".format(len(cues) - 1))
+        return cues[locator_index]
+
+    def _toggle_cue_at(self, time):
+        """Song.set_or_delete_cue works at the playhead: move the (stopped) playhead to `time` and
+        toggle. The playhead stays there, as when adding a locator by hand."""
+        if self._song.is_playing:
+            raise Exception("Stop playback first: Live adds and removes locators at the playhead")
+        self._song.current_song_time = float(time)
+        self._song.set_or_delete_cue()
+
+    def _cue_snapshot(self):
+        return [(c.time, c.name) for c in self._song.cue_points]
+
+    def _toggle_and_diff(self, time):
+        """Toggle at `time`; return (added times, removed (time, name) pairs). set_or_delete_cue
+        is a toggle that may snap to the grid, so callers check what really changed."""
+        before = self._cue_snapshot()
+        self._toggle_cue_at(time)
+        after = self._cue_snapshot()
+        added = [t for t, _ in after if not any(abs(t - b) < 1e-6 for b, _ in before)]
+        removed = [(t, n) for t, n in before if not any(abs(t - a) < 1e-6 for a, _ in after)]
+        return added, removed
+
+    def _undo_cue_changes(self, added, removed):
+        """Put the locators back the way they were (re-add removed ones with their names)."""
+        for t in added:
+            self._toggle_cue_at(t)
+        for t, n in removed:
+            self._toggle_cue_at(t)
+            for c in self._song.cue_points:
+                if abs(c.time - t) < 1e-6:
+                    c.name = n
+
+    def _create_locator(self, time, name=None):
+        """Add a locator at `time` (beats) and name it. Reuses a locator already at that time."""
+        try:
+            time = float(time)
+            if time < 0:
+                raise ValueError("time must be >= 0 (beats)")
+            for cue in self._song.cue_points:
+                if abs(cue.time - time) < 1e-6:
+                    if name:
+                        cue.name = name
+                    return {"created": False, "existing": True, "time": cue.time, "name": cue.name}
+            added, removed = self._toggle_and_diff(time)
+            if removed:
+                # Live snapped onto a grid line that already had a locator and toggled it off
+                self._undo_cue_changes(added, removed)
+                raise Exception("Live snapped beat {0} onto beat {1}, where locator '{2}' already is; "
+                                "it was left untouched (rename it, or pick a time on the grid)".format(
+                                    time, removed[0][0], removed[0][1]))
+            if added:
+                t = added[0]
+                if abs(t - time) > self._beats_per_bar():
+                    # Far from the request: the playhead did not move
+                    self._undo_cue_changes(added, [])
+                    raise Exception("Live could not add a locator at beat {0} (it landed at beat {1} "
+                                    "and was removed)".format(time, t))
+                for c in self._song.cue_points:
+                    if abs(c.time - t) < 1e-6:
+                        if name:
+                            c.name = name
+                        result = {"created": True, "time": c.time, "name": c.name,
+                                  "bar": int(c.time // self._beats_per_bar()) + 1}
+                        if abs(t - time) > 1e-6:
+                            result["snapped_from"] = time
+                        return result
+
+            # Nothing listed yet: Live may only add the cue point on the next tick; name it then
+            bpb = self._beats_per_bar()
+
+            def name_later():
+                near = [c for c in self._song.cue_points if abs(c.time - time) <= bpb]
+                if near and name:
+                    min(near, key=lambda c: abs(c.time - time)).name = name
+            self.schedule_message(1, name_later)
+            return {"created": "unconfirmed", "time": time, "name": name,
+                    "warning": "Live had not listed the locator yet; check with get_locators"}
+        except Exception as e:
+            self.log_message("Error creating locator: " + str(e))
+            raise
+
+    def _rename_locator(self, locator_index, name):
+        try:
+            cue = self._get_cue(locator_index)
+            cue.name = name
+            return self._locator_info(locator_index, cue)
+        except Exception as e:
+            self.log_message("Error renaming locator: " + str(e))
+            raise
+
+    def _delete_locator(self, locator_index):
+        try:
+            cue = self._get_cue(locator_index)
+            info = self._locator_info(locator_index, cue)
+            target = info["time"]
+            added, removed = self._toggle_and_diff(target)
+            hit = [r for r in removed if abs(r[0] - target) < 1e-6]
+            others = [r for r in removed if abs(r[0] - target) >= 1e-6]
+            if added or others or not hit:
+                self._undo_cue_changes(added, others if hit else removed)
+                raise Exception("Live could not delete the locator at beat {0} (Live's API only removes "
+                                "locators on the grid); delete it by hand".format(target))
+            info["deleted"] = True
+            return info
+        except Exception as e:
+            self.log_message("Error deleting locator: " + str(e))
+            raise
+
+    def _jump_to_locator(self, locator_index):
+        try:
+            cue = self._get_cue(locator_index)
+            cue.jump()
+            return self._locator_info(locator_index, cue)
+        except Exception as e:
+            self.log_message("Error jumping to locator: " + str(e))
+            raise
+
+    def _groove_info(self, index, groove):
+        info = {"index": index, "name": groove.name}
+        for attr in ("base", "timing_amount", "random_amount", "velocity_amount", "quantization_amount"):
+            info[attr] = getattr(groove, attr, None)
+        return info
+
+    def _get_groove_pool(self):
+        """Grooves in the set's Groove Pool (drag them in from the browser's Grooves folder first)."""
+        try:
+            grooves = list(self._song.groove_pool.grooves)
+            return {"grooves": [self._groove_info(i, g) for i, g in enumerate(grooves)],
+                    "global_amount": getattr(self._song, "groove_amount", None)}
+        except Exception as e:
+            self.log_message("Error getting groove pool: " + str(e))
+            raise
+
+    def _get_groove(self, groove_index):
+        grooves = list(self._song.groove_pool.grooves)
+        if groove_index < 0 or groove_index >= len(grooves):
+            raise IndexError("Groove index out of range ({0} grooves in the pool)".format(len(grooves)))
+        return grooves[groove_index]
+
+    def _set_clip_groove(self, track_index, clip_index, groove_index, aci=None):
+        """Assign a Groove Pool groove to a clip; groove_index -1 removes it."""
+        try:
+            clip = self._session_clip(track_index, clip_index, arrangement_clip_index=aci)
+            if groove_index is None or int(groove_index) < 0:
+                clip.groove = None
+                return {"clip": clip.name, "groove": None}
+            groove = self._get_groove(int(groove_index))
+            clip.groove = groove
+            return {"clip": clip.name, "groove": groove.name}
+        except Exception as e:
+            self.log_message("Error setting clip groove: " + str(e))
+            raise
+
+    def _set_groove_params(self, groove_index, timing_amount=None, random_amount=None, velocity_amount=None,
+                           quantization_amount=None, base=None, global_amount=None):
+        """Edit a groove's amounts (0-1; velocity -1 to 1) and/or the set's global groove amount."""
+        try:
+            result = {}
+            if groove_index is not None and int(groove_index) >= 0:
+                groove = self._get_groove(int(groove_index))
+                for attr, value in (("timing_amount", timing_amount), ("random_amount", random_amount),
+                                    ("velocity_amount", velocity_amount),
+                                    ("quantization_amount", quantization_amount)):
+                    if value is not None:
+                        setattr(groove, attr, float(value))
+                if base is not None:
+                    groove.base = int(base)
+                result["groove"] = self._groove_info(int(groove_index), groove)
+            if global_amount is not None:
+                self._song.groove_amount = float(global_amount)
+            result["global_amount"] = getattr(self._song, "groove_amount", None)
+            return result
+        except Exception as e:
+            self.log_message("Error setting groove params: " + str(e))
+            raise
+
+    def _warp_marker_list(self, clip):
+        return [{"beat_time": m.beat_time, "sample_time": m.sample_time} for m in clip.warp_markers]
+
+    def _get_warp_markers(self, track_index, clip_index, aci=None):
+        try:
+            clip = self._session_clip(track_index, clip_index, midi=False, arrangement_clip_index=aci)
+            return {"clip": clip.name, "warping": clip.warping, "warp_markers": self._warp_marker_list(clip)}
+        except Exception as e:
+            self.log_message("Error getting warp markers: " + str(e))
+            raise
+
+    def _add_warp_marker(self, track_index, clip_index, beat_time, sample_time=None, aci=None):
+        """Add a warp marker at beat_time (clip beats); sample_time (seconds in the file) pins
+        that moment of the audio to beat_time."""
+        try:
+            import Live
+            clip = self._session_clip(track_index, clip_index, midi=False, arrangement_clip_index=aci)
+            if not clip.warping:
+                raise Exception("Turn warping on first (set_clip_warping)")
+            beat_time = float(beat_time)
+            if sample_time is None:
+                # A marker that keeps the audio where it is: the sample time currently at beat_time
+                sample_time = clip.beat_to_sample_time(beat_time)
+            clip.add_warp_marker(Live.Clip.WarpMarker(sample_time=float(sample_time), beat_time=beat_time))
+            return {"clip": clip.name, "warp_markers": self._warp_marker_list(clip)}
+        except Exception as e:
+            self.log_message("Error adding warp marker: " + str(e))
+            raise
+
+    def _move_warp_marker(self, track_index, clip_index, beat_time, beat_time_distance, aci=None):
+        try:
+            clip = self._session_clip(track_index, clip_index, midi=False, arrangement_clip_index=aci)
+            clip.move_warp_marker(float(beat_time), float(beat_time_distance))
+            return {"clip": clip.name, "warp_markers": self._warp_marker_list(clip)}
+        except Exception as e:
+            self.log_message("Error moving warp marker: " + str(e))
+            raise
+
+    def _remove_warp_marker(self, track_index, clip_index, beat_time, aci=None):
+        try:
+            clip = self._session_clip(track_index, clip_index, midi=False, arrangement_clip_index=aci)
+            clip.remove_warp_marker(float(beat_time))
+            return {"clip": clip.name, "warp_markers": self._warp_marker_list(clip)}
+        except Exception as e:
+            self.log_message("Error removing warp marker: " + str(e))
+            raise
+
+    def _capture_midi(self, destination=0):
+        """Capture MIDI: what was played on armed/monitored MIDI tracks recently becomes a clip.
+        destination 0 = auto, 1 = Session, 2 = Arrangement."""
+        try:
+            self._song.capture_midi(int(destination))
+            return {"captured": True, "destination": int(destination)}
+        except Exception as e:
+            self.log_message("Error capturing MIDI: " + str(e))
+            raise
+
+    def _duplicate_scene(self, scene_index):
+        try:
+            if scene_index < 0 or scene_index >= len(self._song.scenes):
+                raise IndexError("Scene index out of range")
+            self._song.duplicate_scene(scene_index)
+            new_scene = self._song.scenes[scene_index + 1]
+            return {"new_scene_index": scene_index + 1, "name": new_scene.name,
+                    "scene_count": len(self._song.scenes)}
+        except Exception as e:
+            self.log_message("Error duplicating scene: " + str(e))
+            raise
+
+    def _move_device(self, track_index, device_index, new_index, target_track_index=None):
+        """Reorder a device in its chain, or move it to another track."""
+        try:
+            track = self._get_track(track_index)
+            devices = list(track.devices)
+            if device_index < 0 or device_index >= len(devices):
+                raise IndexError("Device index out of range")
+            device = devices[device_index]
+            target = track if target_track_index is None else self._get_track(target_track_index)
+            position = max(0, min(int(new_index), len(target.devices)))
+            self._song.move_device(device, target, position)
+            return {"device": device.name, "track": target.name,
+                    "devices": [d.name for d in target.devices]}
+        except Exception as e:
+            self.log_message("Error moving device: " + str(e))
+            raise
+
+    def _get_rack(self, track_index, device_index):
+        track = self._get_track(track_index)
+        devices = list(track.devices)
+        if device_index < 0 or device_index >= len(devices):
+            raise IndexError("Device index out of range")
+        device = devices[device_index]
+        if not getattr(device, "can_have_chains", False):
+            raise Exception("Device '{0}' is not a rack".format(device.name))
+        return device
+
+    def _chain_levels(self, chain):
+        """Volume and panning of a rack chain (MIDI Effect Rack chains have neither)."""
+        try:
+            vol = chain.mixer_device.volume
+            return {"volume": vol.value, "volume_display": vol.str_for_value(vol.value),
+                    "panning": chain.mixer_device.panning.value}
+        except Exception:
+            return {}
+
+    def _get_rack_chains(self, track_index, device_index):
+        """Chains of an Instrument/Audio Effect/Drum Rack with their mixer and devices."""
+        try:
+            device = self._get_rack(track_index, device_index)
+            chains = []
+            for i, chain in enumerate(device.chains):
+                info = {"index": i, "name": chain.name, "mute": chain.mute, "solo": chain.solo,
+                        "devices": [{"index": j, "name": d.name, "class_name": d.class_name}
+                                    for j, d in enumerate(chain.devices)]}
+                info.update(self._chain_levels(chain))
+                chains.append(info)
+            params = list(device.parameters)
+            macro_count = int(getattr(device, "visible_macro_count", 8) or 0)
+            macros = [{"parameter_index": p_i, "name": params[p_i].name, "value": params[p_i].value,
+                       "display": params[p_i].str_for_value(params[p_i].value)}
+                      for p_i in range(1, min(1 + macro_count, len(params)))]
+            return {"device": device.name, "class_name": device.class_name, "chains": chains,
+                    "macros": macros}
+        except Exception as e:
+            self.log_message("Error getting rack chains: " + str(e))
+            raise
+
+    def _set_chain_mixer(self, track_index, device_index, chain_index, mute=None, solo=None,
+                         volume=None, panning=None):
+        """Mute/solo a rack chain, set its volume (0-1, 0.85 = 0 dB) or panning (-1 to 1)."""
+        try:
+            device = self._get_rack(track_index, device_index)
+            chains = list(device.chains)
+            if chain_index < 0 or chain_index >= len(chains):
+                raise IndexError("Chain index out of range")
+            chain = chains[chain_index]
+            if (volume is not None or panning is not None) and not self._chain_levels(chain):
+                raise Exception("This rack's chains have no volume or panning (MIDI Effect Rack)")
+            if mute is not None:
+                chain.mute = bool(mute)
+            if solo is not None:
+                chain.solo = bool(solo)
+            if volume is not None:
+                vol = chain.mixer_device.volume
+                vol.value = vol.min + float(volume) * (vol.max - vol.min)
+            if panning is not None:
+                chain.mixer_device.panning.value = max(-1.0, min(1.0, float(panning)))
+            result = {"chain": chain.name, "mute": chain.mute, "solo": chain.solo}
+            result.update(self._chain_levels(chain))
+            return result
+        except Exception as e:
+            self.log_message("Error setting chain mixer: " + str(e))
+            raise
+
+    _SEARCH_CATEGORIES = ("sounds", "drums", "instruments", "audio_effects", "midi_effects", "samples",
+                          "clips", "grooves", "user_library", "current_project", "packs", "plugins",
+                          "max_for_live")
+
+    def _search_browser(self, query, category="all", max_results=30, max_depth=8, max_nodes=20000,
+                        time_budget=6.0):
+        """Find browser items whose name contains every word of `query` (case-insensitive).
+        Breadth-first, so shallow matches come first; bounded by depth, node count and time."""
+        try:
+            deadline = time.time() + time_budget
+            words = [w for w in query.lower().split() if w]
+            if not words:
+                raise ValueError("Empty query")
+            browser = self.application().browser
+            roots = []
+            names = self._SEARCH_CATEGORIES if category in (None, "", "all") else (category,)
+            for name in names:
+                if name == "user_folders":
+                    continue
+                root = getattr(browser, name, None)
+                if root is not None and hasattr(root, "children"):
+                    roots.append((name, root))
+            if category in (None, "", "all", "user_folders"):
+                for folder in getattr(browser, "user_folders", []) or []:
+                    roots.append(("user_folders/" + folder.name, folder))
+            if not roots:
+                raise ValueError("Unknown browser category: {0}".format(category))
+
+            results, visited, seen_uris = [], 0, set()
+            level = [(path, item) for path, item in roots]
+            depth = 0
+            truncated = False
+            while level and depth <= max_depth and len(results) < max_results:
+                next_level = []
+                for path, item in level:
+                    for child in item.children:
+                        visited += 1
+                        if visited > max_nodes or (visited % 200 == 0 and time.time() > deadline):
+                            truncated = True
+                            break
+                        child_path = path + "/" + child.name
+                        lname = child.name.lower()
+                        uri = getattr(child, "uri", None)
+                        if all(w in lname for w in words) and uri not in seen_uris:
+                            seen_uris.add(uri)
+                            results.append({"name": child.name, "path": child_path, "uri": uri,
+                                            "is_loadable": getattr(child, "is_loadable", False),
+                                            "is_folder": getattr(child, "is_folder", False)})
+                            if len(results) >= max_results:
+                                break
+                        if getattr(child, "is_folder", False) or getattr(child, "is_device", False):
+                            next_level.append((child_path, child))
+                    if truncated or len(results) >= max_results:
+                        break
+                if truncated:
+                    break
+                level = next_level
+                depth += 1
+            return {"query": query, "results": results, "count": len(results), "nodes_visited": visited,
+                    "truncated": truncated or (bool(level) and depth > max_depth)}
+        except Exception as e:
+            self.log_message("Error searching browser: " + str(e))
+            raise
+
+    def _get_view_state(self):
+        try:
+            view = self._song.view
+            app_view = self.application().view
+            result = {"focused_view": None, "selected_track": None, "selected_scene": None, "detail_clip": None}
+            result["focused_view"] = getattr(app_view, "focused_document_view", None)
+            track = view.selected_track
+            if track is not None:
+                result["selected_track"] = track.name
+                tracks = list(self._song.tracks)
+                if track in tracks:
+                    result["selected_track_index"] = tracks.index(track)
+            scene = view.selected_scene
+            if scene is not None:
+                result["selected_scene"] = scene.name
+                scenes = list(self._song.scenes)
+                if scene in scenes:
+                    result["selected_scene_index"] = scenes.index(scene)
+            clip = view.detail_clip
+            if clip is not None:
+                result["detail_clip"] = clip.name
+            return result
+        except Exception as e:
+            self.log_message("Error getting view state: " + str(e))
+            raise
+
+    def _select_track(self, track_index):
+        try:
+            track = self._get_track(track_index)
+            self._song.view.selected_track = track
+            return {"selected_track": track.name}
+        except Exception as e:
+            self.log_message("Error selecting track: " + str(e))
+            raise
+
+    def _select_scene(self, scene_index):
+        try:
+            if scene_index < 0 or scene_index >= len(self._song.scenes):
+                raise IndexError("Scene index out of range")
+            scene = self._song.scenes[scene_index]
+            self._song.view.selected_scene = scene
+            return {"selected_scene": scene.name}
+        except Exception as e:
+            self.log_message("Error selecting scene: " + str(e))
+            raise
+
+    def _select_clip(self, track_index, clip_index, aci=None):
+        """Select a clip and show it in Clip View (session slot or arrangement clip)."""
+        try:
+            track = self._get_track(track_index)
+            clip = self._session_clip(track_index, clip_index, arrangement_clip_index=aci)
+            self._song.view.selected_track = track
+            if aci is None:
+                self._song.view.highlighted_clip_slot = track.clip_slots[clip_index]
+            self._song.view.detail_clip = clip
+            try:
+                self.application().view.show_view("Detail/Clip")
+            except Exception:
+                pass
+            return {"selected_clip": clip.name, "track": track.name}
+        except Exception as e:
+            self.log_message("Error selecting clip: " + str(e))
+            raise
+
+    _VIEWS = {"session": "Session", "arrangement": "Arranger", "arranger": "Arranger",
+              "clip": "Detail/Clip", "devices": "Detail/DeviceChain", "device": "Detail/DeviceChain",
+              "browser": "Browser", "detail": "Detail"}
+
+    def _focus_view(self, view_name):
+        """Show and focus Session, Arrangement, Clip View, Device View or the Browser."""
+        try:
+            name = self._VIEWS.get(str(view_name).lower(), view_name)
+            app_view = self.application().view
+            app_view.show_view(name)
+            app_view.focus_view(name)
+            return {"focused": name}
+        except Exception as e:
+            self.log_message("Error focusing view: " + str(e))
+            raise
+
+    def _fold_track(self, track_index, fold=True):
+        try:
+            track = self._get_track(track_index)
+            if not getattr(track, "is_foldable", False):
+                raise Exception("Track '{0}' is not a group track".format(track.name))
+            track.fold_state = 1 if fold else 0
+            return {"track": track.name, "folded": bool(track.fold_state)}
+        except Exception as e:
+            self.log_message("Error folding track: " + str(e))
+            raise
+
+    def _note_window(self, clip, from_time, time_span):
+        end = max(clip.length, getattr(clip, "loop_end", 0.0), getattr(clip, "end_marker", 0.0))
+        if time_span is None or time_span < 0:
+            time_span = max(end - from_time, 0.0) + 1.0
+        return from_time, time_span
+
+    def _transpose_clip_notes(self, track_index, clip_index, semitones, from_pitch=0, pitch_span=128,
+                              from_time=0.0, time_span=-1.0, aci=None):
+        """Shift the notes in a pitch/time window by `semitones` (refused if a note would leave 0-127)."""
+        try:
+            clip = self._session_clip(track_index, clip_index, midi=True, arrangement_clip_index=aci)
+            from_time, time_span = self._note_window(clip, from_time, time_span)
+            notes = clip.get_notes_extended(int(from_pitch), int(pitch_span), float(from_time), float(time_span))
+            out = [n.pitch for n in notes if not 0 <= n.pitch + int(semitones) <= 127]
+            if out:
+                raise Exception("{0} note(s) would leave the MIDI range 0-127; nothing was changed".format(len(out)))
+            for note in notes:
+                note.pitch = note.pitch + int(semitones)
+            clip.apply_note_modifications(notes)
+            return {"clip": clip.name, "notes_transposed": len(notes), "semitones": int(semitones)}
+        except Exception as e:
+            self.log_message("Error transposing notes: " + str(e))
+            raise
+
+    def _humanize_clip(self, track_index, clip_index, timing=0.0, velocity=0, seed=None,
+                       from_time=0.0, time_span=-1.0, aci=None):
+        """Nudge note starts randomly by up to +/- `timing` beats and velocities by up to +/- `velocity`."""
+        try:
+            import random
+            rng = random.Random(seed)
+            clip = self._session_clip(track_index, clip_index, midi=True, arrangement_clip_index=aci)
+            from_time, time_span = self._note_window(clip, from_time, time_span)
+            notes = clip.get_notes_extended(0, 128, float(from_time), float(time_span))
+            timing = abs(float(timing or 0.0))
+            velocity = abs(int(velocity or 0))
+            for note in notes:
+                if timing:
+                    note.start_time = max(0.0, note.start_time + rng.uniform(-timing, timing))
+                if velocity:
+                    note.velocity = max(1, min(127, int(round(note.velocity + rng.uniform(-velocity, velocity)))))
+            clip.apply_note_modifications(notes)
+            return {"clip": clip.name, "notes_humanized": len(notes), "timing": timing, "velocity": velocity}
+        except Exception as e:
+            self.log_message("Error humanizing clip: " + str(e))
+            raise
+
+    def _set_track_height(self, track_index, steps=0, collapsed=None, all_tracks=False):
+        """Arrangement track height. Live has no pixel height in its API: `collapsed` sets
+        Track.View.is_collapsed, and `steps` zooms the height with Application.View.zoom_view
+        (up = taller), for the selected track only (modifier) or for all tracks."""
+        try:
+            steps = int(steps or 0)
+            app_view = self.application().view
+            result = {}
+            track = None
+            if not all_tracks:
+                track = self._get_track(track_index)
+                result["track"] = track.name
+                if collapsed is not None:
+                    track.view.is_collapsed = bool(collapsed)
+            if steps:
+                app_view.show_view("Arranger")
+                if track is not None:
+                    # zoom_view with the modifier changes the highlighted track only
+                    self._song.view.selected_track = track
+                direction = 0 if steps > 0 else 1
+                for _ in range(abs(steps)):
+                    app_view.zoom_view(direction, "Arranger", track is not None)
+                result["steps"] = steps
+                result["scope"] = "track" if track is not None else "all_tracks"
+            if track is not None:
+                result["collapsed"] = bool(track.view.is_collapsed)
+            return result
+        except Exception as e:
+            self.log_message("Error setting track height: " + str(e))
+            raise
+
+    def _unarm_all(self):
+        try:
+            names = []
+            for track in self._song.tracks:
+                if getattr(track, "can_be_armed", False) and track.arm:
+                    track.arm = False
+                    names.append(track.name)
+            return {"unarmed": names, "count": len(names)}
+        except Exception as e:
+            self.log_message("Error unarming tracks: " + str(e))
             raise
 
     def _get_clip_info(self, track_index, clip_index, arrangement_clip_index=None):

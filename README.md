@@ -30,6 +30,12 @@ This fork adds significant capabilities beyond the original:
 - **Undo/redo** support
 - **Batch** — `batch` runs many commands in one round trip and one Live tick (10 commands: 0.4 s instead of 2–4 s), with `{"$ref": [i, "key"]}` to use an earlier result
 - **Events** — `get_events` reports what happened in Live since you last asked (clip launches by you or the user, transport, tempo, selection, mute/solo/arm, tracks added), with long-polling
+- **Colors and names** — Color tracks, clips (session or arrangement) and scenes by hex or palette index; rename arrangement clips
+- **Locators** — List, add, rename, delete and jump to arrangement locators (markers), so sections like Intro/Break/Drop are labeled in the timeline
+- **Grooves and warping** — Apply Groove Pool grooves to clips and edit their amounts; read, add, move and remove warp markers on audio clips
+- **Racks and devices** — Read rack chains and macros, mute/solo/level chains, reorder a device or move it to another track
+- **Browser search** — Find sounds, presets, samples and grooves by name across the browser, including the User Library and user folders
+- **Navigation and helpers** — Select tracks, scenes and clips, switch views, fold groups, resize or collapse arrangement tracks, capture MIDI, duplicate scenes, transpose or humanize a clip, disarm all tracks; `get_session_info` lists every track, `get_track_info` covers master and returns with sends
 
 See [NEXT_STEPS.md](NEXT_STEPS.md) for the full feature list and roadmap.
 
@@ -187,10 +193,10 @@ AI Assistant --> MCP Server (Python) --> TCP socket (port 9877) --> Remote Scrip
 ## Available Tools
 
 ### Read
-`get_session_info`, `get_track_info`, `get_device_parameters`, `get_arrangement_info`, `get_arrangement_clips`, `get_full_arrangement`, `get_clip_notes`, `get_arrangement_clip_notes`, `get_clip_envelope`, `get_browser_tree`, `get_browser_items_at_path`, `get_drum_pads`, `get_clip_info`
+`get_session_info`, `get_track_info`, `get_device_parameters`, `get_arrangement_info`, `get_arrangement_clips`, `get_full_arrangement`, `get_clip_notes`, `get_arrangement_clip_notes`, `get_clip_envelope`, `get_browser_tree`, `get_browser_items_at_path`, `get_drum_pads`, `get_clip_info`, `get_locators`, `get_groove_pool`, `get_warp_markers`, `get_rack_chains`, `search_browser`, `get_view_state`
 
 ### Modify
-`create_midi_track`, `create_audio_track`, `create_clip`, `create_arrangement_audio_clips_batch`, `resample_master`, `add_notes_to_clip`, `set_clip_name`, `set_clip_loop`, `delete_clip`, `delete_arrangement_clip`, `duplicate_clip`, `delete_track`, `duplicate_track`, `set_track_name`, `set_track_volume`, `set_track_panning`, `set_track_mute`, `set_track_solo`, `set_track_arm`, `set_send_level`, `set_tempo`, `set_time_signature`, `set_metronome`, `fire_clip`, `stop_clip`, `fire_scene`, `create_scene`, `delete_scene`, `set_scene_name`, `start_playback`, `stop_playback`, `play_arrangement`, `load_instrument_or_effect`, `set_device_parameter`, `batch_set_device_parameters`, `delete_device`, `set_song_time`, `set_record_mode`, `set_arrangement_overdub`, `set_back_to_arranger`, `set_arrangement_loop`, `set_clip_envelope`, `clear_clip_envelope`, `undo`, `redo`, `remove_notes`, `quantize_clip`, `duplicate_clip_loop`, `duplicate_region`, `set_device_enabled`, `create_return_track`, `delete_return_track`, `stop_all_clips`, `set_clip_gain`, `set_clip_pitch`, `set_clip_warping`, `set_clip_warp_mode`
+`create_midi_track`, `create_audio_track`, `create_clip`, `create_arrangement_audio_clips_batch`, `resample_master`, `add_notes_to_clip`, `set_clip_name`, `set_clip_loop`, `delete_clip`, `delete_arrangement_clip`, `duplicate_clip`, `delete_track`, `duplicate_track`, `set_track_name`, `set_track_volume`, `set_track_panning`, `set_track_mute`, `set_track_solo`, `set_track_arm`, `set_send_level`, `set_tempo`, `set_time_signature`, `set_metronome`, `fire_clip`, `stop_clip`, `fire_scene`, `create_scene`, `delete_scene`, `set_scene_name`, `start_playback`, `stop_playback`, `play_arrangement`, `load_instrument_or_effect`, `set_device_parameter`, `batch_set_device_parameters`, `delete_device`, `set_song_time`, `set_record_mode`, `set_arrangement_overdub`, `set_back_to_arranger`, `set_arrangement_loop`, `set_clip_envelope`, `clear_clip_envelope`, `undo`, `redo`, `remove_notes`, `quantize_clip`, `duplicate_clip_loop`, `duplicate_region`, `set_device_enabled`, `create_return_track`, `delete_return_track`, `stop_all_clips`, `set_clip_gain`, `set_clip_pitch`, `set_clip_warping`, `set_clip_warp_mode`, `set_track_color`, `set_clip_color`, `set_scene_color`, `create_locator`, `rename_locator`, `delete_locator`, `jump_to_locator`, `set_clip_groove`, `set_groove_params`, `add_warp_marker`, `move_warp_marker`, `remove_warp_marker`, `capture_midi`, `duplicate_scene`, `move_device`, `set_chain_mixer`, `select_track`, `select_scene`, `select_clip`, `focus_view`, `fold_track`, `transpose_clip_notes`, `humanize_clip`, `unarm_all`, `set_track_height`
 
 ### Arrangement
 The arrangement view supports a **full read-modify-write loop directly**, no session-view round-trip required:
