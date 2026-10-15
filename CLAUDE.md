@@ -3,7 +3,7 @@
 Control Ableton Live through MCP tools. This project has two parts:
 
 1. **Remote Script** (`AbletonMCP_Remote_Script/__init__.py`) — runs inside Ableton, listens on TCP port 9877
-2. **MCP Server** (`MCP_Server/server.py`) — exposes 80 tools to AI assistants via FastMCP
+2. **MCP Server** (`MCP_Server/server.py`) — exposes 111 tools to AI assistants via FastMCP
 
 ## Key Conventions
 
